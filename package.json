@@ -1,0 +1,13 @@
+{
+  "name": "idv.jlchntoz.skinnedmeshcombiner",
+  "version": "0.1.0",
+  "displayName": "Skinned Mesh Combiner",
+  "description": "Skinned Mesh Combiner Tools",
+  "licensesUrl": "https://github.com/JLChnToZ/SkinnedMeshCombiner/blob/master/LICENSE",
+  "keywords": ["Utility", "Mesh Combiner"],
+  "author": {
+    "name": "Jeremy Lam aka. Vistanz",
+    "email": "me@moka-rin.moe",
+    "url": "https://code.moka-rin.moe"
+  }
+}
