@@ -37,9 +37,10 @@ namespace JLChnToZ.EditorExtensions {
             "- Bake (freeze state and then removes) selected blendshapes\n" +
             "- Save the combined mesh to a file\n" +
             "- Deactivates combined mesh renderer sources";
-        const string REMOVE_UNUSED_INFO = "Here are the dereferenced objects from the last combine operation. " +
-            "You can manually select them and delete them here. " +
-            "Beware that these objects may be referenced by other components, please check before deleting them.\n" +
+        const string REMOVE_UNUSED_INFO = "Here are the dereferenced objects from the last combine operation.\n" +
+            "You can use the one-click button to auto delete or hide them all, or handle them manually by yourself.\n" +
+            "If it is an object from a prefab, it will be inactived and set to editor only.\n" +
+            "Gray out objects means theres are references pointing to them and/or their children in hierarchy.\n" +
             "You can use Unity's undo function if you accidentally deleted something.";
         static readonly string[] tabNames = new[] { "Combine Meshes", "Combine Bones", "Cleanup" };
         int currentTab;
@@ -54,7 +55,8 @@ namespace JLChnToZ.EditorExtensions {
         Dictionary<Transform, HashSet<Renderer>> boneToRenderersMap = new Dictionary<Transform, HashSet<Renderer>>();
         Dictionary<Transform, bool> boneFolded = new Dictionary<Transform, bool>();
         HashSet<Transform> bonesToMergeUpwards = new HashSet<Transform>();
-        HashSet<Transform> unusedObjects = new HashSet<Transform>();
+        HashSet<Transform> unusedTransforms = new HashSet<Transform>();
+        HashSet<Transform> safeDeleteTransforms = new HashSet<Transform>();
         ReorderableList sourceList;
 
         [MenuItem("JLChnToZ/Tools/Skinned Mesh Combiner")]
@@ -86,7 +88,10 @@ namespace JLChnToZ.EditorExtensions {
                     if (tabChanged) RefreshBones();
                     DrawCombineBoneTab();
                     break;
-                case 2: DrawUnusedObjectsTab(); break;
+                case 2:
+                    if (tabChanged) UpdateSafeDeleteObjects();
+                    DrawUnusedObjectsTab();
+                    break;
             }
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginDisabledGroup(sources.Count == 0 || destination == null);
@@ -96,7 +101,8 @@ namespace JLChnToZ.EditorExtensions {
                 sources.Clear();
                 bakeBlendShapeMap.Clear();
                 boneReamp.Clear();
-                unusedObjects.Clear();
+                unusedTransforms.Clear();
+                safeDeleteTransforms.Clear();
                 bonesToMergeUpwards.Clear();
                 boneToRenderersMap.Clear();
                 boneFolded.Clear();
@@ -146,7 +152,7 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         void DrawCombineBoneTab() {
-            EditorGUILayout.HelpBox("Select bones to merge upwards (to its parent in hierachy).", MessageType.Info);
+            EditorGUILayout.HelpBox("Select bones to merge upwards (to its parent in hierarchy).", MessageType.Info);
             boneMergeScrollPos = EditorGUILayout.BeginScrollView(boneMergeScrollPos);
             var drawStack = new Stack<(Transform, int)>();
             foreach (var transform in rootTransforms)
@@ -200,32 +206,110 @@ namespace JLChnToZ.EditorExtensions {
         void DrawUnusedObjectsTab() {
             EditorGUILayout.HelpBox(REMOVE_UNUSED_INFO, MessageType.Info);
             unusedObjectScrollPos = EditorGUILayout.BeginScrollView(unusedObjectScrollPos);
-            foreach (var unusedObject in unusedObjects) {
-                if (unusedObject == null) continue;
+            foreach (var unusedTransform in unusedTransforms) {
+                if (unusedTransform == null) continue;
                 EditorGUILayout.BeginHorizontal();
-                var gameObject = unusedObject.gameObject;
+                var gameObject = unusedTransform.gameObject;
+                EditorGUI.BeginDisabledGroup(!safeDeleteTransforms.Contains(unusedTransform));
                 EditorGUILayout.LabelField(EditorGUIUtility.ObjectContent(gameObject, typeof(GameObject)), GUILayout.ExpandWidth(true));
+                EditorGUI.EndDisabledGroup();
                 if (GUILayout.Button("Locate", EditorStyles.miniButtonLeft, GUILayout.ExpandWidth(false)))
-                    EditorGUIUtility.PingObject(unusedObject);
+                    EditorGUIUtility.PingObject(unusedTransform);
                 if (GUILayout.Button("Select", EditorStyles.miniButtonMid, GUILayout.ExpandWidth(false)))
-                    Selection.activeObject = unusedObject;
+                    Selection.activeTransform = unusedTransform;
                 if (GUILayout.Button("+", EditorStyles.miniButtonMid, GUILayout.ExpandWidth(false)))
-                    Selection.objects = new HashSet<UnityEngine.Object>(Selection.objects) { unusedObject }.ToArray();
+                    Selection.objects = new HashSet<GameObject>(Selection.gameObjects) { unusedTransform.gameObject }.ToArray();
+                if (GUILayout.Button("-", EditorStyles.miniButtonMid, GUILayout.ExpandWidth(false)))
+                    Selection.objects = Selection.gameObjects.Where(x => x != unusedTransform.gameObject).ToArray();
+                if (GUILayout.Button("Set Editor Only", EditorStyles.miniButtonMid, GUILayout.ExpandWidth(false)))
+                    SetEditorOnly(unusedTransform.gameObject);
                 if (GUILayout.Button("Delete", EditorStyles.miniButtonRight, GUILayout.ExpandWidth(false)))
-                    Undo.DestroyObjectImmediate(unusedObject.gameObject);
+                    SafeDeleteObject(unusedTransform.gameObject);
                 EditorGUILayout.EndHorizontal();
             }
             EditorGUILayout.EndScrollView();
             EditorGUILayout.BeginHorizontal();
+            EditorGUI.BeginDisabledGroup(unusedTransforms.Count == 0);
             if (GUILayout.Button("Select All", GUILayout.ExpandWidth(false)))
-                Selection.objects = unusedObjects.Where(x => x != null).ToArray();
-            if (GUILayout.Button("Delete All", GUILayout.ExpandWidth(false))) {
-                foreach (var unusedObject in unusedObjects) {
-                    if (unusedObject == null) continue;
-                    Undo.DestroyObjectImmediate(unusedObject.gameObject);
-                }
-            }
+                Selection.objects = unusedTransforms.Where(x => x != null).Select(x => x.gameObject).ToArray();
+            if (GUILayout.Button("Refresh", GUILayout.ExpandWidth(false)))
+                UpdateSafeDeleteObjects();
+            if (GUILayout.Button("Set All to Editor Only", GUILayout.ExpandWidth(false)) &&
+                EditorUtility.DisplayDialog("Confirm", "Proceed on set editor only?\nYou may undo if the result is unexpected.", "Yes", "No"))
+                SafeDeleteAllObjects(true);
+            if (GUILayout.Button("Safely Delete All", GUILayout.ExpandWidth(false)) &&
+                EditorUtility.DisplayDialog("Confirm", "Proceed on safe delete?\nYou may undo if the result is unexpected.", "Yes", "No"))
+                SafeDeleteAllObjects(false);
+            EditorGUI.EndDisabledGroup();
             EditorGUILayout.EndHorizontal();
+        }
+
+        void UpdateSafeDeleteObjects() {
+            safeDeleteTransforms.Clear();
+            int count = unusedTransforms.Count;
+            if (count == 0) return;
+            var sceneObjects = new HashSet<Component>(
+                unusedTransforms.First().gameObject.scene.GetRootGameObjects()
+                .SelectMany(x => x.GetComponentsInChildren<Component>(true))
+                .Where(x => x != null && !(x is Transform) && !unusedTransforms.Contains(x.transform))
+            );
+            var checkObjects = new HashSet<UnityEngine.Object>();
+            var hierarchyWalker = new Stack<Transform>();
+            int i = -1;
+            foreach (var unusedObject in unusedTransforms) {
+                i++;
+                if (unusedObject == null) continue;
+                EditorUtility.DisplayProgressBar("Collecting Unused Objects", unusedObject.name, (float)i / count);
+                hierarchyWalker.Push(unusedObject);
+                checkObjects.Clear();
+                while (hierarchyWalker.Count > 0) {
+                    var transform = hierarchyWalker.Pop();
+                    if (transform == null) continue;
+                    checkObjects.Add(transform.gameObject);
+                    checkObjects.UnionWith(transform.GetComponents<Component>());
+                    foreach (Transform child in transform) hierarchyWalker.Push(child);
+                }
+                bool hasReference = false;
+                foreach (var sceneObject in sceneObjects) {
+                    var so = new SerializedObject(sceneObject);
+                    var iterator = so.GetIterator();
+                    while (iterator.Next(true))
+                        if (iterator.propertyType == SerializedPropertyType.ObjectReference) {
+                            var obj = iterator.objectReferenceValue;
+                            if (obj != null && checkObjects.Contains(obj)) {
+                                hasReference = true;
+                                break;
+                            }
+                        }
+                    if (hasReference) break;
+                }
+                if (!hasReference) safeDeleteTransforms.Add(unusedObject);
+            }
+            EditorUtility.ClearProgressBar();
+        }
+
+        void SafeDeleteAllObjects(bool hideOnly = false) {
+            UpdateSafeDeleteObjects();
+            foreach (var unusedTransform in safeDeleteTransforms) {
+                if (unusedTransform == null) continue;
+                if (hideOnly)
+                    SetEditorOnly(unusedTransform.gameObject);
+                else
+                    SafeDeleteObject(unusedTransform.gameObject);
+            }
+        }
+
+        static void SetEditorOnly(GameObject gameObject) {
+            gameObject.tag = "EditorOnly";
+            gameObject.SetActive(false);
+            Undo.RecordObject(gameObject, "Set Editor Only");
+        }
+
+        static void SafeDeleteObject(GameObject gameObject) {
+            if (PrefabUtility.IsPartOfAnyPrefab(gameObject))
+                SetEditorOnly(gameObject);
+            else
+                Undo.DestroyObjectImmediate(gameObject);
         }
 
         static void OnListDrawHeader(Rect rect) => EditorGUI.LabelField(rect, "(Skinned) Mesh Renderers to Combine");
@@ -358,11 +442,12 @@ namespace JLChnToZ.EditorExtensions {
                     boneReamp[bone] = targetBone;
                 }
             }
-            unusedObjects.Clear();
+            unusedTransforms.Clear();
+            safeDeleteTransforms.Clear();
             foreach (var source in sources) {
-                unusedObjects.Add(source.transform);
+                unusedTransforms.Add(source.transform);
                 if (source is SkinnedMeshRenderer skinnedMeshRenderer)
-                    unusedObjects.UnionWith(skinnedMeshRenderer.bones.Where(b => b != null));
+                    unusedTransforms.UnionWith(skinnedMeshRenderer.bones.Where(b => b != null));
             }
             var mesh = Combine(sources.Select(source => {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
@@ -371,8 +456,8 @@ namespace JLChnToZ.EditorExtensions {
             }).ToArray(), destination, mergeSubMeshes, blendShapeCopyMode, boneReamp);
             if (mesh != null) {
                 mesh.Optimize();
-                unusedObjects.ExceptWith(destination.bones);
-                unusedObjects.Remove(destination.transform);
+                unusedTransforms.ExceptWith(destination.bones);
+                unusedTransforms.Remove(destination.transform);
                 var path = EditorUtility.SaveFilePanelInProject("Save Mesh", mesh.name, "asset", "Save Combined Mesh", sources.Select(source => {
                     var skinnedMeshRenderer = source as SkinnedMeshRenderer;
                     if (skinnedMeshRenderer != null) return skinnedMeshRenderer.sharedMesh;
@@ -537,10 +622,10 @@ namespace JLChnToZ.EditorExtensions {
             var combinedNewMesh = new Mesh { name = $"{destination.name} Combined Mesh" };
             var combineInstanceArray = materials.SelectMany(material => combineInstances[material]).ToArray();
             combinedNewMesh.CombineMeshes(combineInstanceArray.Select(entry => entry.Item1).ToArray(), false, false);
-            combinedNewMesh.boneWeights = combineInstanceArray.SelectMany(entry => {
+            combinedNewMesh.boneWeights = combineInstanceArray.Select(entry => {
                 boneWeights.TryGetValue((entry.Item1.mesh, entry.Item1.subMeshIndex), out var weights);
                 return weights;
-            }).Where(x => x != null).ToArray();
+            }).Where(x => x != null).SelectMany(x => x).ToArray();
             combinedNewMesh.bindposes = bindPoseArray;
             if (blendShapeCopyMode != BlendShapeCopyMode.None)
                 CopyBlendShapes(combinedNewMesh, combineInstanceArray, blendShapeCopyMode, ref blendShapesStore, ref vntArrayCache, ref vntArrayCache2);
@@ -551,7 +636,7 @@ namespace JLChnToZ.EditorExtensions {
             destination.localBounds = combinedNewMesh.bounds;
             destination.sharedMaterials = materials.ToArray();
             destination.bones = allBones.ToArray();
-            if (destination.rootBone == null) destination.rootBone = destination.transform;
+            if (destination.rootBone == null) destination.rootBone = allBones.Count > 0 ? allBones[0] : destination.transform;
             foreach (var kv in blendShapesWeights) {
                 var index = combinedNewMesh.GetBlendShapeIndex(kv.Key);
                 if (index >= 0) destination.SetBlendShapeWeight(index, kv.Value);
