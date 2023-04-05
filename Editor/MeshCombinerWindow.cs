@@ -37,6 +37,8 @@ namespace JLChnToZ.EditorExtensions {
             "- Bake (freeze state and then removes) selected blendshapes\n" +
             "- Save the combined mesh to a file\n" +
             "- Deactivates combined mesh renderer sources";
+        const string COMBINE_BONE_INFO = "Select bones to merge upwards (to its parent in hierarchy).\n" +
+            "You can hold shift to toggle/fold all children of a bone.";
         const string REMOVE_UNUSED_INFO = "Here are the dereferenced objects from the last combine operation.\n" +
             "You can use the one-click button to auto delete or hide them all, or handle them manually by yourself.\n" +
             "If it is an object from a prefab, it will be inactived and set to editor only.\n" +
@@ -128,7 +130,7 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         void DrawCombineBoneTab() {
-            EditorGUILayout.HelpBox("Select bones to merge upwards (to its parent in hierarchy).", MessageType.Info);
+            EditorGUILayout.HelpBox(COMBINE_BONE_INFO, MessageType.Info);
             boneMergeScrollPos = EditorGUILayout.BeginScrollView(boneMergeScrollPos);
             var drawStack = new Stack<(Transform, int)>();
             foreach (var transform in rootTransforms)
