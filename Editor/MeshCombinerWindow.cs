@@ -73,6 +73,11 @@ namespace JLChnToZ.EditorExtensions {
                 onRemoveCallback = OnListRemove,
                 drawNoneElementCallback = OnListDrawNoneElement,
             };
+            switch (currentTab) {
+                case 0: RefreshCombineMeshOptions(); break;
+                case 1: RefreshBones(); break;
+                case 2: UpdateSafeDeleteObjects(); break;
+            }
         }
 
         protected virtual void OnGUI() {
@@ -360,6 +365,7 @@ namespace JLChnToZ.EditorExtensions {
             rect.height = EditorGUIUtility.singleLineHeight;
             var rect2 = rect;
             rect2.xMin += 12;
+            rect2.xMax -= 16;
             EditorGUI.LabelField(rect2, renderer == null ? new GUIContent("(Missing)") : EditorGUIUtility.ObjectContent(renderer, renderer.GetType()));
             rect2.x = rect.x;
             rect2.width = 12;
@@ -372,12 +378,27 @@ namespace JLChnToZ.EditorExtensions {
             if (!toggleState) return;
             rect2.width = rect.width;
             rect2.y += EditorGUIUtility.singleLineHeight;
-            if (renderer is SkinnedMeshRenderer)
+            if (renderer is SkinnedMeshRenderer) {
+                bool state = false, isMixed = false;
                 for (var i = 0; i < toggles.Length; i++) {
                     toggles[i] = EditorGUI.ToggleLeft(rect2, $"Bake blendshape {blendShapeNameMap[i]}", toggles[i]);
                     rect2.y += EditorGUIUtility.singleLineHeight;
+                    if (i == 0)
+                        state = toggles[i];
+                    else if (toggles[i] != state)
+                        isMixed = true;
                 }
-            else if (renderer is MeshRenderer)
+                rect2.y = rect.y;
+                rect2.x = rect.xMax - 16;
+                rect2.width = 16;
+                EditorGUI.BeginChangeCheck();
+                EditorGUI.showMixedValue = isMixed;
+                state = EditorGUI.Toggle(rect2, state);
+                EditorGUI.showMixedValue = false;
+                if (EditorGUI.EndChangeCheck())
+                    for (var i = 0; i < toggles.Length; i++)
+                        toggles[i] = state;
+            } else if (renderer is MeshRenderer)
                 toggles[0] = EditorGUI.ToggleLeft(rect2, "Don't create bone for this mesh renderer.", toggles[0]);
         }
 
