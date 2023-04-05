@@ -48,7 +48,7 @@ namespace JLChnToZ.EditorExtensions {
         List<Renderer> sources = new List<Renderer>();
         SkinnedMeshRenderer destination;
         BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices;
-        bool mergeSubMeshes = true;
+        bool mergeSubMeshes = true, autoCleanup = true;
         Dictionary<Renderer, (bool[], bool, string[])> bakeBlendShapeMap = new Dictionary<Renderer, (bool[], bool, string[])>();
         Dictionary<Transform, Transform> boneReamp = new Dictionary<Transform, Transform>();
         HashSet<Transform> rootTransforms = new HashSet<Transform>();
@@ -94,7 +94,7 @@ namespace JLChnToZ.EditorExtensions {
                     break;
             }
             EditorGUILayout.BeginHorizontal();
-            EditorGUI.BeginDisabledGroup(sources.Count == 0 || destination == null);
+            EditorGUI.BeginDisabledGroup(sources.Count == 0);
             if (GUILayout.Button("Combine")) Combine();
             EditorGUI.EndDisabledGroup();
             if (GUILayout.Button("Clear")) {
@@ -119,32 +119,8 @@ namespace JLChnToZ.EditorExtensions {
             EditorGUILayout.BeginHorizontal();
             destination = EditorGUILayout.ObjectField("Destination", destination, typeof(SkinnedMeshRenderer), true) as SkinnedMeshRenderer;
             if (destination == null && GUILayout.Button("Auto Create", GUILayout.ExpandWidth(false))) {
-                Transform commonParent = null;
-                foreach (var source in sources) {
-                    if (source == null) continue;
-                    if (commonParent == null)
-                        commonParent = source.transform;
-                    else {
-                        var parent = source.transform;
-                        while (parent != null) {
-                            if (parent == commonParent || parent.IsChildOf(commonParent))
-                                break;
-                            if (commonParent.IsChildOf(parent)) {
-                                commonParent = parent;
-                                break;
-                            }
-                            parent = parent.parent;
-                        }
-                    }
-                }
-                if (commonParent != null) {
-                    if (!commonParent.TryGetComponent(out destination)) {
-                        destination = commonParent.gameObject.AddComponent<SkinnedMeshRenderer>();
-                        Undo.RegisterCreatedObjectUndo(destination, "Auto Create Skinned Mesh Renderer");
-                    }
-                    EditorGUIUtility.PingObject(destination);
-                } else
-                    Debug.LogWarning("No common parent found for selected renderers.");
+                destination = AutoCreateSkinnedMeshRenderer();
+                EditorGUIUtility.PingObject(destination);
             }
             EditorGUILayout.EndHorizontal();
             blendShapeCopyMode = (BlendShapeCopyMode)EditorGUILayout.EnumFlagsField("Blend Shape Copy Mode", blendShapeCopyMode);
@@ -157,6 +133,8 @@ namespace JLChnToZ.EditorExtensions {
             var drawStack = new Stack<(Transform, int)>();
             foreach (var transform in rootTransforms)
                 drawStack.Push((transform, 0));
+            bool mergeChildrenState = false;
+            int foldChildrenDepth = -1, toggleChildrenDepth = -1;
             while (drawStack.Count > 0) {
                 var (transform, depth) = drawStack.Pop();
                 EditorGUILayout.BeginHorizontal();
@@ -169,7 +147,21 @@ namespace JLChnToZ.EditorExtensions {
                     var isMerge = bonesToMergeUpwards.Contains(transform);
                     EditorGUI.BeginChangeCheck();
                     folded = GUILayout.Toggle(folded, GUIContent.none, EditorStyles.foldout, GUILayout.ExpandWidth(false));
-                    if (EditorGUI.EndChangeCheck()) boneFolded[transform] = folded;
+                    if (EditorGUI.EndChangeCheck()) {
+                        boneFolded[transform] = folded;
+                        if (Event.current.shift) {
+                            if (folded)
+                                foldChildrenDepth = depth;
+                            else foreach (var child in transform.GetComponentsInChildren<Transform>(true))
+                                if (boneToRenderersMap.ContainsKey(child))
+                                    boneFolded[child] = folded;
+                        }
+                    } else if (foldChildrenDepth >= 0) {
+                        if (foldChildrenDepth >= depth)
+                            foldChildrenDepth = -1;
+                        else
+                            boneFolded[transform] = folded = true;
+                    }
                     EditorGUI.BeginChangeCheck();
                     isMerge = GUILayout.Toggle(isMerge, EditorGUIUtility.ObjectContent(transform, typeof(Transform)), GUILayout.Height(EditorGUIUtility.singleLineHeight), GUILayout.ExpandWidth(false));
                     if (EditorGUI.EndChangeCheck()) {
@@ -177,7 +169,23 @@ namespace JLChnToZ.EditorExtensions {
                             bonesToMergeUpwards.Add(transform);
                         else
                             bonesToMergeUpwards.Remove(transform);
+                        if (Event.current.shift) {
+                            if (folded) {
+                                mergeChildrenState = isMerge;
+                                toggleChildrenDepth = depth;
+                            } else if (isMerge)
+                                bonesToMergeUpwards.UnionWith(transform.GetComponentsInChildren<Transform>(true).Where(boneToRenderersMap.ContainsKey));
+                            else
+                                bonesToMergeUpwards.ExceptWith(transform.GetComponentsInChildren<Transform>(true));
+                        }
                         RefreshBones();
+                    } else if (toggleChildrenDepth >= 0) {
+                        if (toggleChildrenDepth >= depth)
+                            toggleChildrenDepth = -1;
+                        else if (mergeChildrenState)
+                            bonesToMergeUpwards.Add(transform);
+                        else
+                            bonesToMergeUpwards.Remove(transform);
                     }
                     GUILayout.FlexibleSpace();
                     if (GUILayout.Button("Locate", EditorStyles.miniButtonLeft, GUILayout.ExpandWidth(false)))
@@ -228,6 +236,7 @@ namespace JLChnToZ.EditorExtensions {
                 EditorGUILayout.EndHorizontal();
             }
             EditorGUILayout.EndScrollView();
+            autoCleanup = EditorGUILayout.ToggleLeft("Auto Cleanup On Combine", autoCleanup);
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginDisabledGroup(unusedTransforms.Count == 0);
             if (GUILayout.Button("Select All", GUILayout.ExpandWidth(false)))
@@ -242,6 +251,31 @@ namespace JLChnToZ.EditorExtensions {
                 SafeDeleteAllObjects(false);
             EditorGUI.EndDisabledGroup();
             EditorGUILayout.EndHorizontal();
+        }
+
+        SkinnedMeshRenderer AutoCreateSkinnedMeshRenderer() {
+            Transform commonParent = null;
+            foreach (var source in sources) {
+                if (source == null) continue;
+                if (commonParent == null) {
+                    commonParent = source.transform;
+                    continue;
+                }
+                var parent = source.transform;
+                while (parent != null) {
+                    if (parent == commonParent || parent.IsChildOf(commonParent))
+                        break;
+                    if (commonParent.IsChildOf(parent)) {
+                        commonParent = parent;
+                        break;
+                    }
+                    parent = parent.parent;
+                }
+            }
+            var newChild = new GameObject("Combined Mesh", typeof(SkinnedMeshRenderer));
+            if (commonParent != null) newChild.transform.SetParent(commonParent, false);
+            Undo.RegisterCreatedObjectUndo(newChild, "Auto Create Skinned Mesh Renderer");
+            return newChild.GetComponent<SkinnedMeshRenderer>();
         }
 
         void UpdateSafeDeleteObjects() {
@@ -290,6 +324,9 @@ namespace JLChnToZ.EditorExtensions {
 
         void SafeDeleteAllObjects(bool hideOnly = false) {
             UpdateSafeDeleteObjects();
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName(hideOnly ? "Set All to Editor Only" : "Safely Delete All");
+            var undoGroup = Undo.GetCurrentGroup();
             foreach (var unusedTransform in safeDeleteTransforms) {
                 if (unusedTransform == null) continue;
                 if (hideOnly)
@@ -297,12 +334,13 @@ namespace JLChnToZ.EditorExtensions {
                 else
                     SafeDeleteObject(unusedTransform.gameObject);
             }
+            Undo.CollapseUndoOperations(undoGroup);
         }
 
         static void SetEditorOnly(GameObject gameObject) {
+            Undo.RecordObject(gameObject, "Inactivate and Set to Editor Only");
             gameObject.tag = "EditorOnly";
             gameObject.SetActive(false);
-            Undo.RecordObject(gameObject, "Set Editor Only");
         }
 
         static void SafeDeleteObject(GameObject gameObject) {
@@ -449,6 +487,11 @@ namespace JLChnToZ.EditorExtensions {
                 if (source is SkinnedMeshRenderer skinnedMeshRenderer)
                     unusedTransforms.UnionWith(skinnedMeshRenderer.bones.Where(b => b != null));
             }
+            bool shouldPingDestination = false;
+            if (destination == null) {
+                destination = AutoCreateSkinnedMeshRenderer();
+                shouldPingDestination = true;
+            }
             var mesh = Combine(sources.Select(source => {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
                     return (source, bakeBlendShapeToggles.Item1);
@@ -471,6 +514,8 @@ namespace JLChnToZ.EditorExtensions {
                 .Select(System.IO.Path.GetDirectoryName)
                 .FirstOrDefault());
                 if (!string.IsNullOrEmpty(path)) AssetDatabase.CreateAsset(mesh, path);
+                if (autoCleanup) SafeDeleteAllObjects();
+                if (shouldPingDestination) EditorGUIUtility.PingObject(destination);
             } else
                 Debug.LogError("Failed to combine meshes.");
         }
@@ -483,6 +528,9 @@ namespace JLChnToZ.EditorExtensions {
             IDictionary<Transform, Transform> boneRemap = null
         ) {
             if (sources.Count == 0) return null;
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName("Combine Meshes");
+            int undoGroup = Undo.GetCurrentGroup();
             var combineInstances = new Dictionary<Material, List<(CombineInstance, bool[])>>(sources.Count);
             var boneWeights = new Dictionary<(Mesh, int), IEnumerable<BoneWeight>>(sources.Count);
             var bindposeMap = new Dictionary<(Transform, Matrix4x4), int>();
@@ -576,8 +624,8 @@ namespace JLChnToZ.EditorExtensions {
                         if (tangents != null) mesh.SetTangents(tangents);
                         mesh.UploadMeshData(false);
                     }
-                    source.enabled = false;
                     Undo.RecordObject(source, "Combine Meshes");
+                    source.enabled = false;
                 } else if (source is MeshRenderer meshRenderer && source.TryGetComponent(out MeshFilter meshFilter)) {
                     var mesh = Instantiate(meshFilter.sharedMesh);
                     var sharedMaterials = meshRenderer.sharedMaterials;
@@ -599,8 +647,8 @@ namespace JLChnToZ.EditorExtensions {
                         combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, bakeFlags2));
                         boneWeights[(mesh, i)] = Enumerable.Repeat(bakeFlags[0] ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
                     }
-                    source.enabled = false;
                     Undo.RecordObject(source, "Combine Meshes");
+                    source.enabled = false;
                 }
             }
             if (combineInstances.Count < 1) return null;
@@ -632,6 +680,7 @@ namespace JLChnToZ.EditorExtensions {
             foreach (var combines in combineInstances.Values) combines.Clear();
             combinedNewMesh.RecalculateBounds();
             combinedNewMesh.UploadMeshData(false);
+            Undo.RecordObject(destination, "Combine Meshes");
             destination.sharedMesh = combinedNewMesh;
             destination.localBounds = combinedNewMesh.bounds;
             destination.sharedMaterials = materials.ToArray();
@@ -643,7 +692,7 @@ namespace JLChnToZ.EditorExtensions {
             }
             foreach (var (mesh, _) in boneWeights.Keys)
                 if (mesh != null) DestroyImmediate(mesh, false);
-            Undo.RecordObject(destination, "Combine Meshes");
+            Undo.CollapseUndoOperations(undoGroup);
             return combinedNewMesh;
         }
 
