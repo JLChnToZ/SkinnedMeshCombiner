@@ -109,6 +109,7 @@ namespace JLChnToZ.EditorExtensions {
                 boneToRenderersMap.Clear();
                 boneFolded.Clear();
                 destination = null;
+                currentTab = 0;
             }
             EditorGUILayout.EndHorizontal();
             EditorGUILayout.HelpBox(COMBINE_INFO, MessageType.Info);
@@ -494,6 +495,18 @@ namespace JLChnToZ.EditorExtensions {
                 destination = AutoCreateSkinnedMeshRenderer();
                 shouldPingDestination = true;
             }
+            var saveAssetDefaultPath = sources.Select(source => {
+                var skinnedMeshRenderer = source as SkinnedMeshRenderer;
+                if (skinnedMeshRenderer != null) return skinnedMeshRenderer.sharedMesh;
+                var meshRenderer = source as MeshRenderer;
+                if (meshRenderer != null && source.TryGetComponent(out MeshFilter meshFilter)) return meshFilter.sharedMesh;
+                return null;
+            })
+            .Where(m => m != null)
+            .Select(AssetDatabase.GetAssetPath)
+            .Where(p => !string.IsNullOrEmpty(p) && p.StartsWith("Assets/"))
+            .Select(System.IO.Path.GetDirectoryName)
+            .FirstOrDefault() ?? string.Empty;
             var mesh = Combine(sources.Select(source => {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
                     return (source, bakeBlendShapeToggles.Item1);
@@ -503,21 +516,11 @@ namespace JLChnToZ.EditorExtensions {
                 mesh.Optimize();
                 unusedTransforms.ExceptWith(destination.bones);
                 unusedTransforms.Remove(destination.transform);
-                var path = EditorUtility.SaveFilePanelInProject("Save Mesh", mesh.name, "asset", "Save Combined Mesh", sources.Select(source => {
-                    var skinnedMeshRenderer = source as SkinnedMeshRenderer;
-                    if (skinnedMeshRenderer != null) return skinnedMeshRenderer.sharedMesh;
-                    var meshRenderer = source as MeshRenderer;
-                    if (meshRenderer != null && source.TryGetComponent(out MeshFilter meshFilter)) return meshFilter.sharedMesh;
-                    return null;
-                })
-                .Where(m => m != null)
-                .Select(AssetDatabase.GetAssetPath)
-                .Where(p => !string.IsNullOrEmpty(p))
-                .Select(System.IO.Path.GetDirectoryName)
-                .FirstOrDefault());
+                var path = EditorUtility.SaveFilePanelInProject("Save Mesh", mesh.name, "asset", "Save Combined Mesh", saveAssetDefaultPath);
                 if (!string.IsNullOrEmpty(path)) AssetDatabase.CreateAsset(mesh, path);
                 if (autoCleanup) SafeDeleteAllObjects();
                 if (shouldPingDestination) EditorGUIUtility.PingObject(destination);
+                currentTab = 2;
             } else
                 Debug.LogError("Failed to combine meshes.");
         }
@@ -626,8 +629,10 @@ namespace JLChnToZ.EditorExtensions {
                         if (tangents != null) mesh.SetTangents(tangents);
                         mesh.UploadMeshData(false);
                     }
-                    Undo.RecordObject(source, "Combine Meshes");
-                    source.enabled = false;
+                    if (source != destination) {
+                        Undo.RecordObject(source, "Combine Meshes");
+                        source.enabled = false;
+                    }
                 } else if (source is MeshRenderer meshRenderer && source.TryGetComponent(out MeshFilter meshFilter)) {
                     var mesh = Instantiate(meshFilter.sharedMesh);
                     var sharedMaterials = meshRenderer.sharedMaterials;
@@ -649,8 +654,10 @@ namespace JLChnToZ.EditorExtensions {
                         combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, bakeFlags2));
                         boneWeights[(mesh, i)] = Enumerable.Repeat(bakeFlags[0] ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
                     }
-                    Undo.RecordObject(source, "Combine Meshes");
-                    source.enabled = false;
+                    if (source != destination) {
+                        Undo.RecordObject(source, "Combine Meshes");
+                        source.enabled = false;
+                    }
                 }
             }
             if (combineInstances.Count < 1) return null;
