@@ -225,7 +225,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     if (rootBone == null) rootBone = allBones[0];
                     else foreach (var bone in allBones) {
                         if (bone == rootBone) break;
-                        if (bone.IsChildOf(rootBone)) {
+                        if (bone.parent == rootBone) {
                             rootBone = bone;
                             break;
                         }
