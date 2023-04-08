@@ -39,7 +39,6 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         readonly HashSet<int> boneHasWeights = new HashSet<int>();
         readonly Dictionary<int, int> boneMapping = new Dictionary<int, int>();
         readonly List<Material> materials = new List<Material>();
-        readonly HashSet<(Renderer, int)> bakeList = new HashSet<(Renderer, int)>();
         Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache = null, vntArrayCache2 = null;
         readonly BlendShapeCopyMode blendShapeCopyMode;
         readonly List<Vector3> vertices, normals;
@@ -69,6 +68,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var result = core.Combine(destination);
             Undo.SetCurrentGroupName("Combine Meshes");
             Undo.CollapseUndoOperations(group);
+            core.CleanUp();
             return result;
         }
 
@@ -144,7 +144,6 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             for (int i = 0, count = mesh.blendShapeCount; i < count; i++)
                 if (bakeFlags[i]) {
                     ApplyBlendShape(mesh, vertices, normals, tangents, i, source.GetBlendShapeWeight(i));
-                    bakeList.Add((source, i));
                     hasApplyBlendShape = true;
                 } else
                     blendShapesWeights[mesh.GetBlendShapeName(i)] = source.GetBlendShapeWeight(i);
@@ -254,6 +253,16 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             foreach (var (mesh, _) in boneWeights.Keys)
                 if (mesh != null) DestroyImmediate(mesh, false);
             boneWeights.Clear();
+            combineInstances.Clear();
+            bindposeMap.Clear();
+            bindposes.Clear();
+            allBindposes.Clear();
+            allBones.Clear();
+            boneHasWeights.Clear();
+            boneMapping.Clear();
+            materials.Clear();
+            blendShapesStore?.Clear();
+            blendShapesWeights.Clear();
         }
 
         public void CopyBlendShapes(Mesh combinedNewMesh, IEnumerable<(CombineInstance, bool[])> combineInstances) {

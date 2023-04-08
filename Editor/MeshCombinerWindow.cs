@@ -38,6 +38,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             "- Bake (freeze state and then removes) selected blendshapes\n" +
             "- Save the combined mesh to a file\n" +
             "- Deactivates combined mesh renderer sources";
+        const string COMBINE_MESH_INFO = "Select (skinned) mesh renderer(s) and/or its parent, and click \"+\" button to add to the combine list.\n" +
+            "Even it is not necessary in many cases, you may drag to change the processing order.\n" +
+            "You can expand the options such as baking blendshapes by clicking on the arrow on the left.\n" +
+            "You can use the checkbox on the right to toggle all options within the renderer while expanded the view.\n" +
+            "It is recommend to bake the blendshapes that unlikely to be changed after build for better performance and smaller file size.";
         const string COMBINE_BONE_INFO = "Select bones to merge upwards (to its parent in hierarchy).\n" +
             "If a bone does not have weight on any mesh, it will be dereferenced regardless of selection.\n" +
             "You can hold shift to toggle/fold all children of a bone.";
@@ -67,13 +72,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public static void ShowWindow() => GetWindow<MeshCombinerWindow>("Skinned Mesh Combiner").Show(true);
 
         protected virtual void OnEnable() {
-            sourceList = new ReorderableList(sources, typeof(Renderer), true, true, true, true) {
+            sourceList = new ReorderableList(sources, typeof(Renderer), true, false, true, true) {
                 drawElementCallback = OnListDrawElement,
                 elementHeightCallback = OnListGetElementHeight,
-                drawHeaderCallback = OnListDrawHeader,
                 onAddCallback = OnListAdd,
                 onRemoveCallback = OnListRemove,
                 drawNoneElementCallback = OnListDrawNoneElement,
+                headerHeight = 0,
             };
             switch (currentTab) {
                 case 0: RefreshCombineMeshOptions(); break;
@@ -123,6 +128,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         void DrawCombineMeshTab() {
+            EditorGUILayout.HelpBox(COMBINE_MESH_INFO, MessageType.Info);
             sourceListScrollPos = EditorGUILayout.BeginScrollView(sourceListScrollPos);
             sourceList.DoLayoutList();
             EditorGUILayout.EndScrollView();
@@ -355,8 +361,6 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             else
                 Undo.DestroyObjectImmediate(gameObject);
         }
-
-        static void OnListDrawHeader(Rect rect) => EditorGUI.LabelField(rect, "(Skinned) Mesh Renderers to Combine");
         
         void OnListDrawElement(Rect rect, int index, bool isActive, bool isFocused) {
             var renderer = sources[index];
@@ -364,7 +368,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var rect2 = rect;
             rect2.xMin += 12;
             rect2.xMax -= 16;
-            EditorGUI.LabelField(rect2, renderer == null ? new GUIContent("(Missing)") : EditorGUIUtility.ObjectContent(renderer, renderer.GetType()));
+            if (GUI.Button(rect2, renderer == null ? new GUIContent("(Missing)") : EditorGUIUtility.ObjectContent(renderer, renderer.GetType()), EditorStyles.label)) {
+                EditorGUIUtility.PingObject(renderer);
+                if (!isFocused) sourceList.index = index;
+            }
             rect2.x = rect.x;
             rect2.width = 12;
             if (!bakeBlendShapeMap.TryGetValue(renderer, out var bakeBlendShapeToggles)) return;
