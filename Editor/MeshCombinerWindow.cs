@@ -19,15 +19,16 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
-using UnityEngine.Rendering;
 using UnityEditor;
 using UnityEditorInternal;
+using UnityObject = UnityEngine.Object;
 
-namespace JLChnToZ.EditorExtensions {
+namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
+    using static Utils;
+    
     public class MeshCombinerWindow : EditorWindow {
         const string COMBINE_INFO = "Click combine to...\n" +
             "- Combine meshes while retains blendshapes and bones\n" +
@@ -38,6 +39,7 @@ namespace JLChnToZ.EditorExtensions {
             "- Save the combined mesh to a file\n" +
             "- Deactivates combined mesh renderer sources";
         const string COMBINE_BONE_INFO = "Select bones to merge upwards (to its parent in hierarchy).\n" +
+            "If a bone does not have weight on any mesh, it will be dereferenced regardless of selection.\n" +
             "You can hold shift to toggle/fold all children of a bone.";
         const string REMOVE_UNUSED_INFO = "Here are the dereferenced objects from the last combine operation.\n" +
             "You can use the one-click button to auto delete or hide them all, or handle them manually by yourself.\n" +
@@ -217,6 +219,17 @@ namespace JLChnToZ.EditorExtensions {
                 }
             }
             EditorGUILayout.EndScrollView();
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Label("Auto Select Bones...", GUILayout.ExpandWidth(false));
+            if (GUILayout.Button("With Same Name As Parent", GUILayout.ExpandWidth(false))) {
+                SelectBonesWithSimilarNameAsParent(false);
+                RefreshBones();
+            }
+            if (GUILayout.Button("Prefixed With Parent Name", GUILayout.ExpandWidth(false))) {
+                SelectBonesWithSimilarNameAsParent(true);
+                RefreshBones();
+            }
+            EditorGUILayout.EndHorizontal();
         }
 
         void DrawUnusedObjectsTab() {
@@ -262,26 +275,10 @@ namespace JLChnToZ.EditorExtensions {
         }
 
         SkinnedMeshRenderer AutoCreateSkinnedMeshRenderer() {
-            Transform commonParent = null;
-            foreach (var source in sources) {
-                if (source == null) continue;
-                if (commonParent == null) {
-                    commonParent = source.transform;
-                    continue;
-                }
-                var parent = source.transform;
-                while (parent != null) {
-                    if (parent == commonParent || parent.IsChildOf(commonParent))
-                        break;
-                    if (commonParent.IsChildOf(parent)) {
-                        commonParent = parent;
-                        break;
-                    }
-                    parent = parent.parent;
-                }
-            }
+            var commonParent = FindCommonParent(sources.Select(x => x.transform));
             var newChild = new GameObject("Combined Mesh", typeof(SkinnedMeshRenderer));
             if (commonParent != null) newChild.transform.SetParent(commonParent, false);
+            GameObjectUtility.EnsureUniqueNameForSibling(newChild);
             Undo.RegisterCreatedObjectUndo(newChild, "Auto Create Skinned Mesh Renderer");
             return newChild.GetComponent<SkinnedMeshRenderer>();
         }
@@ -291,11 +288,12 @@ namespace JLChnToZ.EditorExtensions {
             int count = unusedTransforms.Count;
             if (count == 0) return;
             var sceneObjects = new HashSet<Component>(
-                unusedTransforms.First().gameObject.scene.GetRootGameObjects()
+                unusedTransforms.Where(x => x != null).Select(x => x.gameObject.scene)
+                .Distinct().SelectMany(x => x.GetRootGameObjects())
                 .SelectMany(x => x.GetComponentsInChildren<Component>(true))
                 .Where(x => x != null && !(x is Transform) && !unusedTransforms.Contains(x.transform))
             );
-            var checkObjects = new HashSet<UnityEngine.Object>();
+            var checkObjects = new HashSet<UnityObject>();
             var hierarchyWalker = new Stack<Transform>();
             int i = -1;
             foreach (var unusedObject in unusedTransforms) {
@@ -461,6 +459,7 @@ namespace JLChnToZ.EditorExtensions {
             rootTransforms.Clear();
             boneToRenderersMap.Clear();
             foreach (var source in sources) {
+                if (source == null) continue;
                 if (source is SkinnedMeshRenderer skinnedMeshRenderer) {
                     var bones = skinnedMeshRenderer.bones;
                     if (bones == null || bones.Length == 0) continue;
@@ -489,6 +488,22 @@ namespace JLChnToZ.EditorExtensions {
                         parent = parent.parent;
                     }
                 }
+            }
+        }
+
+        void SelectBonesWithSimilarNameAsParent(bool checkPrefix) {
+            var stack = new Stack<Transform>();
+            foreach (var transform in rootTransforms) stack.Push(transform);
+            while (stack.Count > 0) {
+                var transform = stack.Pop();
+                var parent = transform.parent;
+                if (parent != null) {
+                    var name = transform.name;
+                    var parentName = transform.parent.name;
+                    if (checkPrefix ? name.StartsWith(parentName) : name == parentName)
+                        bonesToMergeUpwards.Add(transform);
+                }
+                foreach (Transform child in transform) stack.Push(child);
             }
         }
 
@@ -528,7 +543,7 @@ namespace JLChnToZ.EditorExtensions {
             .Where(p => !string.IsNullOrEmpty(p) && p.StartsWith("Assets/"))
             .Select(System.IO.Path.GetDirectoryName)
             .FirstOrDefault() ?? string.Empty;
-            var mesh = Combine(sources.Select(source => {
+            var mesh = SkinnedMeshCombinerCore.Combine(sources.Select(source => {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
                     return (source, bakeBlendShapeToggles.Item1);
                 return (source, null);
@@ -544,449 +559,6 @@ namespace JLChnToZ.EditorExtensions {
                 currentTab = 2;
             } else
                 Debug.LogError("Failed to combine meshes.");
-        }
-
-        public static Mesh Combine(
-            ICollection<(Renderer, bool[])> sources, 
-            SkinnedMeshRenderer destination,
-            bool mergeSubMeshes = true,
-            BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices,
-            IDictionary<Transform, Transform> boneRemap = null
-        ) {
-            if (sources.Count == 0) return null;
-            Undo.IncrementCurrentGroup();
-            Undo.SetCurrentGroupName("Combine Meshes");
-            int undoGroup = Undo.GetCurrentGroup();
-            var combineInstances = new Dictionary<Material, List<(CombineInstance, bool[])>>(sources.Count);
-            var boneWeights = new Dictionary<(Mesh, int), IEnumerable<BoneWeight>>(sources.Count);
-            var bindposeMap = new Dictionary<(Transform, Matrix4x4), int>();
-            var bindposes = new List<Matrix4x4>();
-            var allBindposes = new List<Matrix4x4>();
-            var allBones = new List<Transform>();
-            var boneHasWeights = new HashSet<int>();
-            var boneMapping = new Dictionary<int, int>();
-            var materials = new List<Material>(sources.Count);
-            var bakeList = new HashSet<(Renderer, int)>();
-            Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache = null, vntArrayCache2 = null;
-            Dictionary<string, BlendShapeTimeLine> blendShapesStore = null;
-            var blendShapesWeights = new Dictionary<string, float>();
-            var vertices = blendShapeCopyMode.HasFlag(BlendShapeCopyMode.Vertices) ? new List<Vector3>() : null;
-            var normals = blendShapeCopyMode.HasFlag(BlendShapeCopyMode.Normals) ? new List<Vector3>() : null;
-            var tangents = blendShapeCopyMode.HasFlag(BlendShapeCopyMode.Tangents) ? new List<Vector4>() : null;
-            foreach (var (source, bakeFlags) in sources) {
-                if (source == null) continue;
-                var sourceTransform = source.transform;
-                if (source is SkinnedMeshRenderer skinnedMeshRenderer) {
-                    var orgMesh = skinnedMeshRenderer.sharedMesh;
-                    var mesh = Instantiate(orgMesh);
-                    var sharedMaterials = skinnedMeshRenderer.sharedMaterials;
-                    var bones = skinnedMeshRenderer.bones;
-                    mesh.GetBindposes(bindposes);
-                    var weights = mesh.boneWeights;
-                    PreAllocate(allBones, bones.Length);
-                    PreAllocate(allBindposes, bindposes.Count);
-                    boneMapping.Clear();
-                    boneHasWeights.Clear();
-                    foreach (var weight in weights) {
-                        if (weight.weight0 > 0) boneHasWeights.Add(weight.boneIndex0);
-                        if (weight.weight1 > 0) boneHasWeights.Add(weight.boneIndex1);
-                        if (weight.weight2 > 0) boneHasWeights.Add(weight.boneIndex2);
-                        if (weight.weight3 > 0) boneHasWeights.Add(weight.boneIndex3);
-                    }
-                    for (int i = 0; i < bindposes.Count; i++) {
-                        if (bones[i] == null || !boneHasWeights.Contains(i)) continue;
-                        var targetBone = bones[i];
-                        var poseMatrix = bindposes[i];
-                        if (boneRemap != null && boneRemap.TryGetValue(targetBone, out var bone)) {
-                            poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
-                            targetBone = bone;
-                        }
-                        var key = (targetBone, poseMatrix);
-                        if (!bindposeMap.TryGetValue(key, out var index)) {
-                            bindposeMap[key] = index = bindposeMap.Count;
-                            allBones.Add(targetBone);
-                            allBindposes.Add(poseMatrix);
-                        }
-                        boneMapping[i] = index;
-                    }
-                    for (int i = 0, newIndex; i < weights.Length; i++) {
-                        var weight = weights[i];
-                        if (boneMapping.TryGetValue(weight.boneIndex0, out newIndex)) weight.boneIndex0 = newIndex;
-                        else { weight.boneIndex0 = 0; weight.weight0 = 0; }
-                        if (boneMapping.TryGetValue(weight.boneIndex1, out newIndex)) weight.boneIndex1 = newIndex;
-                        else { weight.boneIndex1 = 0; weight.weight1 = 0; }
-                        if (boneMapping.TryGetValue(weight.boneIndex2, out newIndex)) weight.boneIndex2 = newIndex;
-                        else { weight.boneIndex2 = 0; weight.weight2 = 0; }
-                        if (boneMapping.TryGetValue(weight.boneIndex3, out newIndex)) weight.boneIndex3 = newIndex;
-                        else { weight.boneIndex3 = 0; weight.weight3 = 0; }
-                        weights[i] = weight;
-                    }
-                    var subMeshCount = mesh.subMeshCount;
-                    for (int i = 0; i < subMeshCount; i++) {
-                        if (LazyInitialize(combineInstances, sharedMaterials[i], out var combines))
-                            materials.Add(sharedMaterials[i]);
-                        combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = Matrix4x4.identity }, bakeFlags));
-                        var subMesh = mesh.GetSubMesh(i);
-                        boneWeights[(mesh, i)] = new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount);
-                    }
-                    if (vertices != null) mesh.GetVertices(vertices);
-                    if (normals != null) mesh.GetNormals(normals);
-                    if (tangents != null) mesh.GetTangents(tangents);
-                    bool hasApplyBlendShape = false;
-                    for (int i = 0, count = mesh.blendShapeCount; i < count; i++)
-                        if (bakeFlags[i]) {
-                            ApplyBlendShape(
-                                mesh, vertices, normals, tangents, i,
-                                skinnedMeshRenderer.GetBlendShapeWeight(i),
-                                blendShapeCopyMode, ref vntArrayCache, ref vntArrayCache2
-                            );
-                            bakeList.Add((source, i));
-                            hasApplyBlendShape = true;
-                        } else
-                            blendShapesWeights[mesh.GetBlendShapeName(i)] = skinnedMeshRenderer.GetBlendShapeWeight(i);
-                    if (hasApplyBlendShape) {
-                        if (vertices != null) mesh.SetVertices(vertices);
-                        if (normals != null) mesh.SetNormals(normals);
-                        if (tangents != null) mesh.SetTangents(tangents);
-                        mesh.UploadMeshData(false);
-                    }
-                    if (source != destination) {
-                        Undo.RecordObject(source, "Combine Meshes");
-                        source.enabled = false;
-                    }
-                } else if (source is MeshRenderer meshRenderer && source.TryGetComponent(out MeshFilter meshFilter)) {
-                    var mesh = Instantiate(meshFilter.sharedMesh);
-                    var sharedMaterials = meshRenderer.sharedMaterials;
-                    var subMeshCount = mesh.subMeshCount;
-                    int index = 0;
-                    if (!bakeFlags[0]) {
-                        var key = (sourceTransform, Matrix4x4.identity);
-                        if (!bindposeMap.TryGetValue(key, out index)) {
-                            bindposeMap[key] = index = bindposeMap.Count;
-                            allBindposes.Add(Matrix4x4.identity);
-                            allBones.Add(sourceTransform);
-                        }
-                    }
-                    var bakeFlags2 = Array.ConvertAll(bakeFlags, x => true);
-                    var transform = bakeFlags[0] ? sourceTransform.localToWorldMatrix * destination.transform.worldToLocalMatrix : Matrix4x4.identity;
-                    for (int i = 0; i < subMeshCount; i++) {
-                        if (LazyInitialize(combineInstances, sharedMaterials[i], out var combines))
-                            materials.Add(sharedMaterials[i]);
-                        combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, bakeFlags2));
-                        boneWeights[(mesh, i)] = Enumerable.Repeat(bakeFlags[0] ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
-                    }
-                    if (source != destination) {
-                        Undo.RecordObject(source, "Combine Meshes");
-                        source.enabled = false;
-                    }
-                }
-            }
-            if (combineInstances.Count < 1) return null;
-            var bindPoseArray = allBindposes.ToArray();
-            // 1st pass: merge meshes with same material.
-            if (mergeSubMeshes)
-                foreach (var kv in combineInstances) {
-                    var combines = kv.Value;
-                    if (combines.Count < 2) continue;
-                    var mesh = new Mesh();
-                    var combineArray = combines.Select(entry => entry.Item1).ToArray();
-                    mesh.CombineMeshes(combineArray, true, false);
-                    boneWeights[(mesh, 0)] = combineArray.SelectMany(entry => boneWeights[(entry.mesh, entry.subMeshIndex)]).ToArray();
-                    if (blendShapeCopyMode != BlendShapeCopyMode.None)
-                        CopyBlendShapes(mesh, combines, blendShapeCopyMode, ref blendShapesStore, ref vntArrayCache, ref vntArrayCache2);
-                    combines.Clear();
-                    combines.Add((new CombineInstance { mesh = mesh, transform = Matrix4x4.identity }, new bool[mesh.blendShapeCount]));
-                }
-            var combinedNewMesh = new Mesh { name = $"{destination.name} Combined Mesh" };
-            var combineInstanceArray = materials.SelectMany(material => combineInstances[material]).ToArray();
-            combinedNewMesh.CombineMeshes(combineInstanceArray.Select(entry => entry.Item1).ToArray(), false, false);
-            combinedNewMesh.boneWeights = combineInstanceArray.Select(entry => {
-                boneWeights.TryGetValue((entry.Item1.mesh, entry.Item1.subMeshIndex), out var weights);
-                return weights;
-            }).Where(x => x != null).SelectMany(x => x).ToArray();
-            combinedNewMesh.bindposes = bindPoseArray;
-            if (blendShapeCopyMode != BlendShapeCopyMode.None)
-                CopyBlendShapes(combinedNewMesh, combineInstanceArray, blendShapeCopyMode, ref blendShapesStore, ref vntArrayCache, ref vntArrayCache2);
-            foreach (var combines in combineInstances.Values) combines.Clear();
-            combinedNewMesh.RecalculateBounds();
-            combinedNewMesh.UploadMeshData(false);
-            Undo.RecordObject(destination, "Combine Meshes");
-            destination.sharedMesh = combinedNewMesh;
-            destination.localBounds = combinedNewMesh.bounds;
-            destination.sharedMaterials = materials.ToArray();
-            destination.bones = allBones.ToArray();
-            if (destination.rootBone == null) destination.rootBone = allBones.Count > 0 ? allBones[0] : destination.transform;
-            foreach (var kv in blendShapesWeights) {
-                var index = combinedNewMesh.GetBlendShapeIndex(kv.Key);
-                if (index >= 0) destination.SetBlendShapeWeight(index, kv.Value);
-            }
-            foreach (var (mesh, _) in boneWeights.Keys)
-                if (mesh != null) DestroyImmediate(mesh, false);
-            Undo.CollapseUndoOperations(undoGroup);
-            return combinedNewMesh;
-        }
-
-        public static void CopyBlendShapes(
-            Mesh combinedNewMesh, 
-            IEnumerable<(CombineInstance, bool[])> combineInstances,
-            BlendShapeCopyMode copyMode = BlendShapeCopyMode.Vertices
-        ) {
-            Dictionary<string, BlendShapeTimeLine> blendShapesStore = null;
-            Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache = null;
-            Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache2 = null;
-            CopyBlendShapes(combinedNewMesh, combineInstances, copyMode, ref blendShapesStore, ref vntArrayCache, ref vntArrayCache2);
-        }
-
-        static void CopyBlendShapes(
-            Mesh combinedNewMesh,
-            IEnumerable<(CombineInstance, bool[])> combineInstances,
-            BlendShapeCopyMode copyMode,
-            ref Dictionary<string, BlendShapeTimeLine> blendShapesStore,
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache2
-        ) {
-            if (!LazyInitialize(ref blendShapesStore)) blendShapesStore.Clear();
-            int offset = 0;
-            foreach (var (entry, bakeFlags) in combineInstances) {
-                var mesh = entry.mesh;
-                var subMeshIndex = entry.subMeshIndex;
-                var subMesh = mesh.GetSubMesh(subMeshIndex);
-                for (int k = 0; k < mesh.blendShapeCount; k++) {
-                    if (bakeFlags[k]) continue;
-                    string key = mesh.GetBlendShapeName(k);
-                    LazyInitialize(blendShapesStore, key, out var timeline);
-                    timeline.AddFrom(mesh, subMeshIndex, k, offset);
-                }
-                offset += subMesh.vertexCount;
-            }
-            foreach (var timeline in blendShapesStore) timeline.Value.ApplyTo(combinedNewMesh, timeline.Key, copyMode, ref vntArrayCache, ref vntArrayCache2);
-        }
-
-        static bool LazyInitialize<TKey, TValue>(IDictionary<TKey, TValue> dict, TKey key, out TValue value) where TValue : new() {
-            if (!dict.TryGetValue(key, out value)) {
-                dict[key] = value = new TValue();
-                return true;
-            }
-            return false;
-        }
-
-        static bool LazyInitialize<T>(ref T value) where T : new() {
-            if (value == null) {
-                value = new T();
-                return true;
-            }
-            return false;
-        }
-
-        static void PreAllocate<T>(List<T> list, int capacity) {
-            capacity += list.Count;
-            if (list.Capacity < capacity) list.Capacity = capacity;
-        }
-        
-
-        static (Vector3[], Vector3[], Vector3[]) GetVNTArrays(
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
-            int vertexCount, BlendShapeCopyMode copyMode
-        ) {
-            LazyInitialize(ref vntArrayCache);
-            if (!vntArrayCache.TryGetValue(vertexCount, out var vntArray))
-                vntArrayCache[vertexCount] = vntArray = (
-                    copyMode.HasFlag(BlendShapeCopyMode.Vertices) ? new Vector3[vertexCount] : null,
-                    copyMode.HasFlag(BlendShapeCopyMode.Normals) ? new Vector3[vertexCount] : null,
-                    copyMode.HasFlag(BlendShapeCopyMode.Tangents) ? new Vector3[vertexCount] : null
-                );
-            return vntArray;
-        }
-
-        static void LerpVNTArray(
-            Vector3[] prev, int prevIndex, Vector3[] next, int nextIndex, Vector3[] dest, int destIndex,
-            float weight
-        ) {
-            if (prev != null && next != null && dest != null)
-                dest[destIndex] = Vector3.Lerp(prev[prevIndex], next[nextIndex], weight);
-        }
-
-        static void CopyVNTArrays(
-            (Vector3[], Vector3[], Vector3[], float) frameData, (SubMeshDescriptor, int, int) subMeshData, 
-            Vector3[] destDeltaVertices, Vector3[] destDeltaNormals, Vector3[] destDeltaTangents
-        ) {
-            var (deltaVertices, deltaNormals, deltaTangents, _) = frameData;
-            var (subMesh, _, destOffset) = subMeshData;
-            var srcOffset = subMesh.firstVertex;
-            var srcVertexCount = subMesh.vertexCount;
-            if (deltaVertices != null && destDeltaVertices != null) Array.Copy(deltaVertices, srcOffset, destDeltaVertices, destOffset, srcVertexCount);
-            if (deltaNormals != null && destDeltaNormals != null) Array.Copy(deltaNormals, srcOffset, destDeltaNormals, destOffset, srcVertexCount);
-            if (deltaTangents != null && destDeltaTangents != null) Array.Copy(deltaTangents, srcOffset, destDeltaTangents, destOffset, srcVertexCount);
-        }
-
-        static void ApplyBlendShape(List<Vector3> source, Vector3[] blendShapeDataPrev, Vector3[] blendShapeDataNext, float lerp, int offset, int count) {
-            if (source == null) return;
-            for (int i = 0; i < count; i++) {
-                var index = offset + i;
-                source[index] += blendShapeDataPrev == null ? blendShapeDataNext[index] * lerp :
-                    blendShapeDataNext == null || lerp <= 0 ? blendShapeDataPrev[index] :
-                    Vector3.LerpUnclamped(blendShapeDataPrev[index], blendShapeDataNext[index], lerp);
-            }
-        }
-
-        static void ApplyBlendShape(List<Vector4> source, Vector3[] blendShapeDataPrev, Vector3[] blendShapeDataNext, float lerp, int offset, int count) {
-            if (source == null) return;
-            for (int i = 0; i < count; i++) {
-                var index = offset + i;
-                source[index] += (Vector4)(blendShapeDataPrev == null ? blendShapeDataNext[index] * lerp :
-                    blendShapeDataNext == null || lerp <= 0 ? blendShapeDataPrev[index] :
-                    Vector3.LerpUnclamped(blendShapeDataPrev[index], blendShapeDataNext[index], lerp));
-            }
-        }
-
-        static void ApplyBlendShape(
-            Mesh mesh, List<Vector3> vertices, List<Vector3> normals, List<Vector4> tangents,
-            int blendShapeIndex, float weight, BlendShapeCopyMode copyMode,
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache2
-        ) {
-            var vertexCount = mesh.vertexCount;
-            var vntArray = GetVNTArrays(ref vntArrayCache, vertices.Count, copyMode);
-            var (deltaVertices, deltaNormals, deltaTangents) = vntArray;
-            int count = mesh.GetBlendShapeFrameCount(blendShapeIndex);
-            if (count == 0) return;
-            float frameWeight;
-            for (int i = 1; i < count; i++) {
-                frameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);
-                if (frameWeight > weight) {
-                    mesh.GetBlendShapeFrameVertices(blendShapeIndex, i - 1, deltaVertices, deltaNormals, deltaTangents);
-                    var vntArray2 = GetVNTArrays(ref vntArrayCache2, vertices.Count, copyMode);
-                    var (deltaVertices2, deltaNormals2, deltaTangents2) = vntArray2;
-                    mesh.GetBlendShapeFrameVertices(blendShapeIndex, i, deltaVertices2, deltaNormals2, deltaTangents2);
-                    var nextFrameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);
-                    var lerp = Mathf.InverseLerp(frameWeight, nextFrameWeight, weight);
-                    ApplyBlendShape(vertices, deltaVertices, deltaVertices2, lerp, 0, vertexCount);
-                    ApplyBlendShape(normals, deltaNormals, deltaNormals2, lerp, 0, vertexCount);
-                    ApplyBlendShape(tangents, deltaTangents, deltaTangents2, lerp, 0, vertexCount);
-                    return;
-                }
-            }
-            frameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, count - 1);
-            mesh.GetBlendShapeFrameVertices(blendShapeIndex, count - 1, deltaVertices, deltaNormals, deltaTangents);
-            weight /= frameWeight;
-            ApplyBlendShape(vertices, null, deltaVertices, weight, 0, vertexCount);
-            ApplyBlendShape(normals, null, deltaNormals, weight, 0, vertexCount);
-            ApplyBlendShape(tangents, null, deltaTangents, weight, 0, vertexCount);
-        }
-
-        class BlendShapeTimeLine {
-            readonly Dictionary<float, Dictionary<(Mesh, int), int>> frames = new Dictionary<float, Dictionary<(Mesh, int), int>>();
-            readonly Dictionary<(Mesh, int), (SubMeshDescriptor, int, int)> subMeshes = new Dictionary<(Mesh, int), (SubMeshDescriptor, int, int)>();
-
-            public void AddFrom(Mesh mesh, int subMeshIndex, int blendShapeIndex, int destOffset) {
-                var subMeshKey = (mesh, subMeshIndex);
-                if (subMeshes.ContainsKey(subMeshKey)) return;
-                var frameCount = mesh.GetBlendShapeFrameCount(blendShapeIndex);
-                if (frameCount < 1) return;
-                subMeshes[subMeshKey] = (mesh.GetSubMesh(subMeshIndex), blendShapeIndex, destOffset);
-                for (int i = 0; i < frameCount; i++) {
-                    var weight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);
-                    LazyInitialize(frames, weight, out var frameIndexMap);
-                    frameIndexMap[(mesh, subMeshIndex)] = i;
-                }
-            }
-
-            public void ApplyTo(
-                Mesh combinedMesh, string blendShapeName,
-                BlendShapeCopyMode copyMode,
-                ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
-                ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache2
-            ) {
-                int destBlendShapeIndex = combinedMesh.GetBlendShapeIndex(blendShapeName);
-                if (destBlendShapeIndex >= 0) {
-                    Debug.LogWarning($"Blend shape {blendShapeName} already exists in the combined mesh. Skipping.");
-                    return;
-                }
-                var destVertexCount = combinedMesh.vertexCount;
-                var remainingMeshes = new HashSet<(Mesh, int)>();
-                var weights = new float[frames.Count];
-                frames.Keys.CopyTo(weights, 0);
-                Array.Sort(weights);
-                for (int i = 0; i < weights.Length; i++) {
-                    var destDeltaVertices = copyMode.HasFlag(BlendShapeCopyMode.Vertices) ? new Vector3[destVertexCount] : null;
-                    var destDeltaNormals = copyMode.HasFlag(BlendShapeCopyMode.Normals) ? new Vector3[destVertexCount] : null;
-                    var destDeltaTangents = copyMode.HasFlag(BlendShapeCopyMode.Tangents) ? new Vector3[destVertexCount] : null;
-                    var weight = weights[i];
-                    var frameIndexMap = frames[weight];
-                    remainingMeshes.UnionWith(subMeshes.Keys);
-                    foreach (var kv in frameIndexMap) {
-                        var subMeshKey = kv.Key;
-                        var (srcMesh, _) = subMeshKey;
-                        var srcSubMeshData = subMeshes[subMeshKey];
-                        var (srcSubMesh, blendShapeIndex, _) = srcSubMeshData;
-                        var (deltaVertices, deltaNormals, deltaTangents) = GetVNTArrays(ref vntArrayCache, srcMesh.vertexCount, copyMode);
-                        srcMesh.GetBlendShapeFrameVertices(blendShapeIndex, kv.Value, deltaVertices, deltaNormals, deltaTangents);
-                        CopyVNTArrays(
-                            (deltaVertices, deltaNormals, deltaTangents, weight), srcSubMeshData,
-                            destDeltaVertices, destDeltaNormals, destDeltaTangents
-                        );
-                        remainingMeshes.Remove(subMeshKey);
-                    }
-                    foreach (var key in remainingMeshes) {
-                        var srcSubMeshData = subMeshes[key];
-                        if (!SeekBlendShapeFrameData(key, srcSubMeshData, weights, i, false, copyMode, ref vntArrayCache, out var prevData)) {
-                            if (SeekBlendShapeFrameData(key, srcSubMeshData, weights, i, true, copyMode, ref vntArrayCache, out prevData))
-                                CopyVNTArrays(prevData, srcSubMeshData, destDeltaVertices, destDeltaNormals, destDeltaTangents);
-                        } else if (!SeekBlendShapeFrameData(key, srcSubMeshData, weights, i, true, copyMode, ref vntArrayCache2, out var nextData)) {
-                            if (SeekBlendShapeFrameData(key, srcSubMeshData, weights, i, false, copyMode, ref vntArrayCache, out nextData))
-                                CopyVNTArrays(nextData, srcSubMeshData, destDeltaVertices, destDeltaNormals, destDeltaTangents);
-                        } else {
-                            var (srcSubMesh, _, destOffset) = srcSubMeshData;
-                            var (prevDeltaVertices, prevDeltaNormals, prevDeltaTangents, prevWeight) = prevData;
-                            var (nextDeltaVertices, nextDeltaNormals, nextDeltaTangents, nextWeight) = nextData;
-                            float lerpWeight = Mathf.InverseLerp(prevWeight, nextWeight, weight);
-                            for (int j = 0, srcOffset = srcSubMesh.firstVertex, srcVertexCount = srcSubMesh.vertexCount; j < srcVertexCount; j++) {
-                                int srcOffset2 = srcOffset + j, destOffset2 = destOffset + j;
-                                LerpVNTArray(prevDeltaVertices, srcOffset2, nextDeltaVertices, srcOffset2, destDeltaVertices, destOffset2, lerpWeight);
-                                LerpVNTArray(prevDeltaNormals, srcOffset2, nextDeltaNormals, srcOffset2, destDeltaNormals, destOffset2, lerpWeight);
-                                LerpVNTArray(prevDeltaTangents, srcOffset2, nextDeltaTangents, srcOffset2, destDeltaTangents, destOffset2, lerpWeight);
-                            }
-                        }
-                    }
-                    try {
-                        combinedMesh.AddBlendShapeFrame(blendShapeName, weight, destDeltaVertices, destDeltaNormals, destDeltaTangents);
-                    } catch (Exception e) {
-                        Debug.LogError(e);
-                    }
-                }
-                if (!copyMode.HasFlag(BlendShapeCopyMode.Normals)) combinedMesh.RecalculateNormals();
-                if (!copyMode.HasFlag(BlendShapeCopyMode.Tangents)) combinedMesh.RecalculateTangents();
-            }
-
-            bool SeekBlendShapeFrameData(
-                (Mesh, int) key, (SubMeshDescriptor, int, int) subMeshData,
-                float[] weights, int weightIndex, bool seekAscending, BlendShapeCopyMode copyMode,
-                ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
-                out (Vector3[], Vector3[], Vector3[], float) result
-            ) {
-                while (true) {
-                    if (seekAscending ? ++weightIndex >= weights.Length : --weightIndex < 0) {
-                        result = default;
-                        return false;
-                    }
-                    if (frames[weights[weightIndex]].TryGetValue(key, out var frameIndex)) {
-                        var (srcMesh, _) = key;
-                        var (_, blendShapeIndex, _) = subMeshData;
-                        var (deltaVertices, deltaNormals, deltaTangents) = GetVNTArrays(ref vntArrayCache, srcMesh.vertexCount, copyMode);
-                        srcMesh.GetBlendShapeFrameVertices(blendShapeIndex, frameIndex, deltaVertices, deltaNormals, deltaTangents);
-                        result = (deltaVertices, deltaNormals, deltaTangents, weights[weightIndex]);
-                        return true;
-                    }
-                }
-            }
-        }
-
-        [Flags]
-        public enum BlendShapeCopyMode : byte {
-            None = 0,
-            Vertices = 0x1,
-            Normals = 0x2,
-            Tangents = 0x4,
         }
     }
 }
