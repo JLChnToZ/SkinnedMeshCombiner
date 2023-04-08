@@ -204,7 +204,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
 
         public Mesh Combine(SkinnedMeshRenderer destination) {
             var bindPoseArray = allBindposes.ToArray();
-            var combinedNewMesh = new Mesh { name = $"{destination.name} Combined Mesh" };
+            var name = destination.name;
+            if (!name.EndsWith("mesh", StringComparison.OrdinalIgnoreCase)) name += " Mesh";
+            var combinedNewMesh = new Mesh { name = name };
             var combineInstanceArray = materials.SelectMany(material => combineInstances[material]).ToArray();
             combinedNewMesh.CombineMeshes(combineInstanceArray.Select(entry => entry.Item1).ToArray(), false, false);
             combinedNewMesh.boneWeights = combineInstanceArray.Select(entry => {
