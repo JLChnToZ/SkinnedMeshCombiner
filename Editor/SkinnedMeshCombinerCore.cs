@@ -23,6 +23,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEditor;
 
 namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
@@ -193,7 +194,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (combines.Count < 2) continue;
                 var mesh = new Mesh();
                 var combineArray = combines.Select(entry => entry.Item1).ToArray();
-                mesh.CombineMeshes(combineArray, true, false);
+                CheckAndCombineMeshes(mesh, combineArray, true);
                 boneWeights[(mesh, 0)] = combineArray.SelectMany(entry => boneWeights[(entry.mesh, entry.subMeshIndex)]).ToArray();
                 if (blendShapeCopyMode != BlendShapeCopyMode.None) CopyBlendShapes(mesh, combines);
                 combines.Clear();
@@ -207,7 +208,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             if (!name.EndsWith("mesh", StringComparison.OrdinalIgnoreCase)) name += " Mesh";
             var combinedNewMesh = new Mesh { name = name };
             var combineInstanceArray = materials.SelectMany(material => combineInstances[material]).ToArray();
-            combinedNewMesh.CombineMeshes(combineInstanceArray.Select(entry => entry.Item1).ToArray(), false, false);
+            CheckAndCombineMeshes(combinedNewMesh, combineInstanceArray.Select(entry => entry.Item1).ToArray(), false);
             combinedNewMesh.boneWeights = combineInstanceArray.Select(entry => {
                 boneWeights.TryGetValue((entry.Item1.mesh, entry.Item1.subMeshIndex), out var weights);
                 return weights;
@@ -247,6 +248,19 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (index >= 0) destination.SetBlendShapeWeight(index, kv.Value);
             }
             return combinedNewMesh;
+        }
+
+        static void CheckAndCombineMeshes(Mesh mesh, CombineInstance[] combineInstances, bool mergeSubMeshes) {
+            int vertexCount = 0;
+            foreach (var combine in combineInstances) {
+                vertexCount += combine.mesh.GetSubMesh(combine.subMeshIndex).vertexCount;
+                if (vertexCount > ushort.MaxValue) {
+                    mesh.indexFormat = IndexFormat.UInt32;
+                    Debug.LogWarning("Mesh has more than 65535 vertices. Index format is changed to 32-bit. Combined mesh may not work on some platforms.");
+                    break;
+                }
+            }
+            mesh.CombineMeshes(combineInstances, mergeSubMeshes, false);
         }
 
         public void CleanUp() {
