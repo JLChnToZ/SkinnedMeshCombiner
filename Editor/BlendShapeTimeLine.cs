@@ -29,14 +29,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
 
     class BlendShapeTimeLine {
         readonly Dictionary<float, Dictionary<(Mesh, int), int>> frames = new Dictionary<float, Dictionary<(Mesh, int), int>>();
-        readonly Dictionary<(Mesh, int), (SubMeshDescriptor, int, int)> subMeshes = new Dictionary<(Mesh, int), (SubMeshDescriptor, int, int)>();
+        readonly Dictionary<(Mesh, int), (SubMeshDescriptor, int, int, Matrix4x4?)> subMeshes = new Dictionary<(Mesh, int), (SubMeshDescriptor, int, int, Matrix4x4?)>();
 
-        public void AddFrom(Mesh mesh, int subMeshIndex, int blendShapeIndex, int destOffset) {
+        public void AddFrom(Mesh mesh, int subMeshIndex, int blendShapeIndex, int destOffset, Matrix4x4? transform = null) {
             var subMeshKey = (mesh, subMeshIndex);
             if (subMeshes.ContainsKey(subMeshKey)) return;
             var frameCount = mesh.GetBlendShapeFrameCount(blendShapeIndex);
             if (frameCount < 1) return;
-            subMeshes[subMeshKey] = (mesh.GetSubMesh(subMeshIndex), blendShapeIndex, destOffset);
+            subMeshes[subMeshKey] = (mesh.GetSubMesh(subMeshIndex), blendShapeIndex, destOffset, transform == null || transform.Value == Matrix4x4.identity ? null : transform);
             for (int i = 0; i < frameCount; i++) {
                 var weight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);
                 LazyInitialize(frames, weight, out var frameIndexMap);
@@ -71,7 +71,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     var subMeshKey = kv.Key;
                     var (srcMesh, _) = subMeshKey;
                     var srcSubMeshData = subMeshes[subMeshKey];
-                    var (srcSubMesh, blendShapeIndex, _) = srcSubMeshData;
+                    var (srcSubMesh, blendShapeIndex, _, transfrom) = srcSubMeshData;
                     var (deltaVertices, deltaNormals, deltaTangents) = GetVNTArrays(ref vntArrayCache, srcMesh.vertexCount, copyMode);
                     srcMesh.GetBlendShapeFrameVertices(blendShapeIndex, kv.Value, deltaVertices, deltaNormals, deltaTangents);
                     CopyVNTArrays(
@@ -89,7 +89,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         if (SeekBlendShapeFrameData(key, srcSubMeshData, weights, i, false, copyMode, ref vntArrayCache, out nextData))
                             CopyVNTArrays(nextData, srcSubMeshData, destDeltaVertices, destDeltaNormals, destDeltaTangents);
                     } else {
-                        var (srcSubMesh, _, destOffset) = srcSubMeshData;
+                        var (srcSubMesh, _, destOffset, transfrom) = srcSubMeshData;
                         var (prevDeltaVertices, prevDeltaNormals, prevDeltaTangents, prevWeight) = prevData;
                         var (nextDeltaVertices, nextDeltaNormals, nextDeltaTangents, nextWeight) = nextData;
                         float lerpWeight = Mathf.InverseLerp(prevWeight, nextWeight, weight);
@@ -112,7 +112,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         bool SeekBlendShapeFrameData(
-            (Mesh, int) key, (SubMeshDescriptor, int, int) subMeshData,
+            (Mesh, int) key, (SubMeshDescriptor, int, int, Matrix4x4?) subMeshData,
             float[] weights, int weightIndex, bool seekAscending, BlendShapeCopyMode copyMode,
             ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
             out (Vector3[], Vector3[], Vector3[], float) result
@@ -124,7 +124,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
                 if (frames[weights[weightIndex]].TryGetValue(key, out var frameIndex)) {
                     var (srcMesh, _) = key;
-                    var (_, blendShapeIndex, _) = subMeshData;
+                    var (_, blendShapeIndex, _, _) = subMeshData;
                     var (deltaVertices, deltaNormals, deltaTangents) = GetVNTArrays(ref vntArrayCache, srcMesh.vertexCount, copyMode);
                     srcMesh.GetBlendShapeFrameVertices(blendShapeIndex, frameIndex, deltaVertices, deltaNormals, deltaTangents);
                     result = (deltaVertices, deltaNormals, deltaTangents, weights[weightIndex]);

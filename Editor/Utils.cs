@@ -80,16 +80,21 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         public static void CopyVNTArrays(
-            (Vector3[], Vector3[], Vector3[], float) frameData, (SubMeshDescriptor, int, int) subMeshData, 
+            (Vector3[], Vector3[], Vector3[], float) frameData, (SubMeshDescriptor, int, int, Matrix4x4?) subMeshData, 
             Vector3[] destDeltaVertices, Vector3[] destDeltaNormals, Vector3[] destDeltaTangents
         ) {
             var (deltaVertices, deltaNormals, deltaTangents, _) = frameData;
-            var (subMesh, _, destOffset) = subMeshData;
+            var (subMesh, _, destOffset, transform) = subMeshData;
             var srcOffset = subMesh.firstVertex;
             var srcVertexCount = subMesh.vertexCount;
             if (deltaVertices != null && destDeltaVertices != null) Array.Copy(deltaVertices, srcOffset, destDeltaVertices, destOffset, srcVertexCount);
             if (deltaNormals != null && destDeltaNormals != null) Array.Copy(deltaNormals, srcOffset, destDeltaNormals, destOffset, srcVertexCount);
             if (deltaTangents != null && destDeltaTangents != null) Array.Copy(deltaTangents, srcOffset, destDeltaTangents, destOffset, srcVertexCount);
+            if (transform.HasValue) {
+                if (deltaVertices != null && destDeltaVertices != null) TransformEach(destDeltaVertices, destOffset, srcVertexCount, transform.Value);
+                if (deltaNormals != null && destDeltaNormals != null) TransformEach(destDeltaNormals, destOffset, srcVertexCount, transform.Value);
+                if (deltaTangents != null && destDeltaTangents != null) TransformEach(destDeltaTangents, destOffset, srcVertexCount, transform.Value);
+            }
         }
 
         public static Transform FindCommonParent(IEnumerable<Transform> transforms) {
@@ -112,6 +117,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
             return commonParent;
+        }
+
+        public static void TransformEach(Vector3[] deltas, int offset, int count, Matrix4x4 transform) {
+            for (var i = 0; i < count; i++)
+                deltas[offset + i] = transform.MultiplyVector(deltas[offset + i]);
         }
     }
 }

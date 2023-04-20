@@ -48,6 +48,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         Dictionary<string, BlendShapeTimeLine> blendShapesStore;
         readonly Dictionary<string, float> blendShapesWeights = new Dictionary<string, float>();
         Bounds bounds;
+        Matrix4x4 referenceTransform = Matrix4x4.identity;
 
         public static Mesh Combine(
             ICollection<(Renderer, bool[])> sources, 
@@ -91,6 +92,19 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var sharedMaterials = source.sharedMaterials;
             var bones = source.bones;
             mesh.GetBindposes(bindposes);
+            var remapTransform = Matrix4x4.identity;
+            var inverseRemapTransform = remapTransform;
+            if (bindposes.Count > 0) {
+                var rootBone = source.rootBone;
+                int rootBoneIndex = rootBone != null ? Array.IndexOf(bones, rootBone) : -1;
+                if (rootBoneIndex < 0) rootBoneIndex = 0; // Fallback to first bone
+                if (combineInstances.Count == 0) 
+                    referenceTransform = bindposes[rootBoneIndex];
+                else {
+                    remapTransform = referenceTransform.inverse * bindposes[rootBoneIndex];
+                    inverseRemapTransform = remapTransform.inverse;
+                }
+            }
             var weights = mesh.boneWeights;
             PreAllocate(allBones, bones.Length);
             PreAllocate(allBindposes, bindposes.Count);
@@ -105,7 +119,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             for (int i = 0; i < bindposes.Count; i++) {
                 if (bones[i] == null || !boneHasWeights.Contains(i)) continue;
                 var targetBone = bones[i];
-                var poseMatrix = bindposes[i];
+                var poseMatrix = bindposes[i] * inverseRemapTransform;
                 if (boneRemap != null && boneRemap.TryGetValue(targetBone, out var bone)) {
                     poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
                     targetBone = bone;
@@ -134,7 +148,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             for (int i = 0; i < subMeshCount; i++) {
                 if (LazyInitialize(combineInstances, sharedMaterials[i], out var combines))
                     materials.Add(sharedMaterials[i]);
-                combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = Matrix4x4.identity }, bakeFlags));
+                combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
                 var subMesh = mesh.GetSubMesh(i);
                 boneWeights[(mesh, i)] = new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount);
             }
@@ -260,7 +274,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     break;
                 }
             }
-            mesh.CombineMeshes(combineInstances, mergeSubMeshes, false);
+            mesh.CombineMeshes(combineInstances, mergeSubMeshes, true);
         }
 
         public void CleanUp() {
@@ -290,7 +304,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     if (bakeFlags[k]) continue;
                     string key = mesh.GetBlendShapeName(k);
                     LazyInitialize(blendShapesStore, key, out var timeline);
-                    timeline.AddFrom(mesh, subMeshIndex, k, offset);
+                    timeline.AddFrom(mesh, subMeshIndex, k, offset, entry.transform);
                 }
                 offset += subMesh.vertexCount;
             }
