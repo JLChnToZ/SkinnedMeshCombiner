@@ -34,6 +34,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         readonly Dictionary<Material, List<(CombineInstance, CombineMeshFlags[])>> combineInstances = new Dictionary<Material, List<(CombineInstance, CombineMeshFlags[])>>();
         readonly Dictionary<(Mesh, int), IEnumerable<BoneWeight>> boneWeights = new Dictionary<(Mesh, int), IEnumerable<BoneWeight>>();
         readonly Dictionary<(Transform, Matrix4x4), int> bindposeMap = new Dictionary<(Transform, Matrix4x4), int>();
+        readonly Dictionary<Transform, List<Matrix4x4>> bindposeMap2 = new Dictionary<Transform, List<Matrix4x4>>();
         readonly List<Matrix4x4> bindposes = new List<Matrix4x4>();
         readonly List<Matrix4x4> allBindposes = new List<Matrix4x4>();
         readonly List<Transform> allBones = new List<Transform>();
@@ -107,8 +108,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             var vertexCutter = new VertexCutter(mesh);
             for (int i = 0, count = mesh.blendShapeCount; i < count; i++) {
-                if ((bakeFlags[i] != CombineMeshFlags.CombineAndRemoveBlendShapeVertex &&
-                    bakeFlags[i] != CombineMeshFlags.AggressiveRemoveBlendShapeVertex) ||
+                if ((bakeFlags[i] != CombineMeshFlags.CombineAndRemoveBlendshapeVertex &&
+                    bakeFlags[i] != CombineMeshFlags.AggressiveRemoveBlendshapeVertex) ||
                     source.GetBlendShapeWeight(i) <= 0)
                     continue;
                 for (int j = 0, framecount = mesh.GetBlendShapeFrameCount(i); j < framecount; j++) {
@@ -117,7 +118,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     mesh.GetBlendShapeFrameVertices(i, j, deltaVertices, null, null);
                     for (int k = 0; k < deltaVertices.Length; k++)
                         if (deltaVertices[k] != Vector3.zero)
-                            vertexCutter.RemoveVertex(k, bakeFlags[i] == CombineMeshFlags.AggressiveRemoveBlendShapeVertex);
+                            vertexCutter.RemoveVertex(k, bakeFlags[i] == CombineMeshFlags.AggressiveRemoveBlendshapeVertex);
                 }
             }
             mesh = vertexCutter.Apply();
@@ -140,6 +141,15 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
                     targetBone = bone;
                 }
+                LazyInitialize(bindposeMap2, targetBone, out var list);
+                bool hasApproximate = false;
+                foreach (var matrix in list)
+                    if (Approximate(poseMatrix, matrix, 0.001F)) {
+                        poseMatrix = matrix;
+                        hasApproximate = true;
+                        break;
+                    }
+                if (!hasApproximate) list.Add(poseMatrix);
                 var key = (targetBone, poseMatrix);
                 if (!bindposeMap.TryGetValue(key, out var index)) {
                     bindposeMap[key] = index = bindposeMap.Count;
@@ -198,7 +208,17 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var subMeshCount = mesh.subMeshCount;
             int index = 0;
             if (!createBone) {
-                var key = (sourceTransform, Matrix4x4.identity);
+                LazyInitialize(bindposeMap2, sourceTransform, out var list);
+                var poseMatrix = Matrix4x4.identity;
+                bool hasApproximate = false;
+                foreach (var matrix in list)
+                    if (Approximate(poseMatrix, matrix, 0.001F)) {
+                        poseMatrix = matrix;
+                        hasApproximate = true;
+                        break;
+                    }
+                if (!hasApproximate) list.Add(poseMatrix);
+                var key = (sourceTransform, poseMatrix);
                 if (!bindposeMap.TryGetValue(key, out index)) {
                     bindposeMap[key] = index = bindposeMap.Count;
                     allBindposes.Add(Matrix4x4.identity);
@@ -384,7 +404,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     public enum CombineMeshFlags {
         None = 0,
         CombineBlendShape = 1,
-        CombineAndRemoveBlendShapeVertex = 2,
-        AggressiveRemoveBlendShapeVertex = 3,
+        CombineAndRemoveBlendshapeVertex = 2,
+        AggressiveRemoveBlendshapeVertex = 3,
     }
 }

@@ -42,7 +42,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             "Even it is not necessary in many cases, you may drag to change the processing order.\n" +
             "You can expand the options such as baking blendshapes by clicking on the arrow on the left.\n" +
             "You can use the checkbox on the right to toggle all options within the renderer while expanded the view.\n" +
-            "It is recommend to bake the blendshapes that unlikely to be changed after build for better performance and smaller file size.";
+            "It is recommend to bake the blendshapes that unlikely to be changed after build for better performance and smaller file size.\n" +
+            "If the blendshape is a \"anti-penetration\" key for hiding skins under clothes, you can use the dropdown to select remove blendshape vertex to reduce triangles and vertices.";
         const string COMBINE_BONE_INFO = "Select bones to merge upwards (to its parent in hierarchy).\n" +
             "If a bone does not have weight on any mesh, it will be dereferenced regardless of selection.\n" +
             "You can hold shift to toggle/fold all children of a bone.";

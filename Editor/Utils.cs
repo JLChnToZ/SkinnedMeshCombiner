@@ -123,5 +123,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             for (var i = 0; i < count; i++)
                 deltas[offset + i] = transform.MultiplyVector(deltas[offset + i]);
         }
+
+        public static bool Approximate(Matrix4x4 lhs, Matrix4x4 rhs, float epsilon = 0.0001f) {
+            for (var i = 0; i < 16; i++)
+                if (Math.Abs(lhs[i] - rhs[i]) > epsilon)
+                    return false;
+            return true;
+        }
     }
 }
