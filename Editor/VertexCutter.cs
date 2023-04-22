@@ -20,7 +20,6 @@
  * SOFTWARE.
  */
 using System;
-using System.Linq;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -29,8 +28,8 @@ using Unity.Collections;
 namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     public class VertexCutter {
         readonly Mesh mesh;
-        HashSet<int> removedVerticeIndecies = new HashSet<int>();
-        HashSet<int> aggressiveRemovedVerticeIndecies = new HashSet<int>();
+        readonly HashSet<int> removedVerticeIndecies = new HashSet<int>();
+        readonly HashSet<int> aggressiveRemovedVerticeIndecies = new HashSet<int>();
 
         public VertexCutter(Mesh mesh) {
             this.mesh = mesh;
@@ -46,132 +45,33 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public Mesh Apply() {
             if (aggressiveRemovedVerticeIndecies.Count == 0 && removedVerticeIndecies.Count == 0)
                 return mesh;
-            var streamCutters = Enumerable.Range((int)VertexAttribute.Position, (int)VertexAttribute.BlendWeight)
-                .Select(i => VertexStreamCutter.Get(mesh, (VertexAttribute)i))
-                .Where(c => c != null).ToArray();
-            NativeArray<BoneWeight1>? boneWeights = null;
-            NativeArray<byte>? bonesPerVertex = null;
+            StreamCutter[] streamCutters;
+            int[] vertexReferenceCounts;
+            {
+                var streamCutterList = new List<StreamCutter>();
+                for (var i = VertexAttribute.Position; i < VertexAttribute.BlendIndices; i++) {
+                    var streamCutter = StreamCutter.Get(mesh, i);
+                    if (streamCutter != null) streamCutterList.Add(streamCutter);
+                }
+                for (int i = 0, count = mesh.blendShapeCount; i < count; i++)
+                    for (int j = 0, frameCount = mesh.GetBlendShapeFrameCount(i); j < frameCount; j++)
+                        streamCutterList.Add(new BlendShapeCutter(mesh, i, j));
+                var triangleCutter = new TriangleCutter(mesh, removedVerticeIndecies, aggressiveRemovedVerticeIndecies);
+                vertexReferenceCounts = triangleCutter.vertexReferenceCounts;
+                streamCutterList.Add(triangleCutter);
+                streamCutters = streamCutterList.ToArray();
+            }
             Matrix4x4[] bindposes = null;
             if (mesh.HasVertexAttribute(VertexAttribute.BlendIndices))
                 bindposes = mesh.bindposes;
-            if (mesh.HasVertexAttribute(VertexAttribute.BlendWeight)) {
-                var array = mesh.GetAllBoneWeights();
-                var temp = new NativeArray<BoneWeight1>(array.Length, Allocator.Temp);
-                array.CopyTo(temp);
-                boneWeights = temp;
-                var array2 = new NativeArray<byte>(mesh.vertexCount, Allocator.Temp);
-                mesh.GetBonesPerVertex().CopyTo(array2);
-                bonesPerVertex = array2;
+            for (int i = 0, length = mesh.vertexCount; i < length; i++) {
+                bool skip = vertexReferenceCounts[i] == 0;
+                foreach (var cutter in streamCutters) cutter.Next(skip);
             }
-            var trianglesStreams = new Vector3Int[mesh.subMeshCount][];
-            var triangles = new List<int>();
-            var vertexReferenceCounts = new int[mesh.vertexCount];
-            var vertexMapping = new int[mesh.vertexCount];
-            int triangleIndexCount = 0;
-            for (int i = 0; i < trianglesStreams.Length; i++) {
-                mesh.GetTriangles(triangles, i);
-                var triangleStream = new Vector3Int[triangles.Count / 3];
-                trianglesStreams[i] = triangleStream;
-                for (int j = 0; j < triangleStream.Length; j++) {
-                    int offset2 = j * 3;
-                    var entry = new Vector3Int(triangles[offset2], triangles[offset2 + 1], triangles[offset2 + 2]);
-                    triangleStream[j] = entry;
-                    if (aggressiveRemovedVerticeIndecies.Contains(entry.x) ||
-                        aggressiveRemovedVerticeIndecies.Contains(entry.y) ||
-                        aggressiveRemovedVerticeIndecies.Contains(entry.z) ||
-                        (removedVerticeIndecies.Contains(entry.x) &&
-                        removedVerticeIndecies.Contains(entry.y) &&
-                        removedVerticeIndecies.Contains(entry.z))) {
-                        triangleStream[j] = new Vector3Int(-1, -1, -1);
-                    } else {
-                        vertexReferenceCounts[entry.x]++;
-                        vertexReferenceCounts[entry.y]++;
-                        vertexReferenceCounts[entry.z]++;
-                        triangleIndexCount += 3;
-                    }
-                }
-            }
-            var blendShapeArrays = new List<Vector3[]>();
-            var blendShapes = new Dictionary<string, Dictionary<float, (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents)>>();
-            for (int i = 0; i < mesh.blendShapeCount; i++) {
-                var name = mesh.GetBlendShapeName(i);
-                var frames = new Dictionary<float, (Vector3[], Vector3[], Vector3[])>();
-                for (int j = 0; j < mesh.GetBlendShapeFrameCount(i); j++) {
-                    var frameWeight = mesh.GetBlendShapeFrameWeight(i, j);
-                    var deltaVertices = mesh.HasVertexAttribute(VertexAttribute.Position) ? new Vector3[mesh.vertexCount] : null;
-                    var deltaNormals = mesh.HasVertexAttribute(VertexAttribute.Normal) ? new Vector3[mesh.vertexCount] : null;
-                    var deltaTangents = mesh.HasVertexAttribute(VertexAttribute.Tangent) ? new Vector3[mesh.vertexCount] : null;
-                    mesh.GetBlendShapeFrameVertices(i, j, deltaVertices, deltaNormals, deltaTangents);
-                    frames.Add(frameWeight, (deltaVertices, deltaNormals, deltaTangents));
-                    if (deltaVertices != null) blendShapeArrays.Add(deltaVertices);
-                    if (deltaNormals != null) blendShapeArrays.Add(deltaNormals);
-                    if (deltaTangents != null) blendShapeArrays.Add(deltaTangents);
-                }
-                blendShapes.Add(name, frames);
-            }
-            int vertexOffset = 0, boneWeightOffset = 0;
-            for (int i = 0, b = 0, length = mesh.vertexCount; i < length; b += bonesPerVertex.HasValue ? bonesPerVertex.Value[i] : 0, i++) {
-                vertexMapping[i] = i - vertexOffset;
-                if (vertexReferenceCounts[i] == 0) {
-                    vertexOffset++;
-                    if (boneWeights != null) boneWeightOffset += bonesPerVertex.Value[i];
-                    continue;
-                }
-                if (vertexOffset > 0) {
-                    foreach (var cutter in streamCutters)
-                        cutter.Move(i, vertexOffset);
-                    if (bonesPerVertex.HasValue) {
-                        var array = bonesPerVertex.Value;
-                        array[i - vertexOffset] = array[i];
-                        if (boneWeights.HasValue) {
-                            for (int j = 0; j < array[i]; j++) {
-                                var array2 = boneWeights.Value;
-                                array2[b - boneWeightOffset + j] = array2[b + j];
-                            }
-                        }
-                    }
-                    foreach (var blendshape in blendShapeArrays)
-                        blendshape[i - vertexOffset] = blendshape[i];
-                }
-            }
-            int newSize = mesh.vertexCount - vertexOffset;
             mesh.Clear(true);
-            foreach (var cutter in streamCutters)
-                cutter.Apply(vertexOffset);
-            if (boneWeights.HasValue && bonesPerVertex.HasValue) {
-                mesh.SetBoneWeights(
-                    bonesPerVertex.Value.GetSubArray(0, newSize),
-                    boneWeights.Value.GetSubArray(0, boneWeights.Value.Length - boneWeightOffset)
-                );
-            }
-            if (bindposes != null) mesh.bindposes = bindposes;
-            mesh.triangles = new int[triangleIndexCount];
-            mesh.subMeshCount = trianglesStreams.Length;
-            for (int i = 0, triangleCount = 0; i < trianglesStreams.Length; i++) {
-                var triangleStream = trianglesStreams[i];
-                triangles.Clear();
-                var requiredCapacity = triangleStream.Length * 3;
-                if (triangles.Capacity < requiredCapacity * 3) triangles.Capacity = requiredCapacity * 3;
-                for (int j = 0; j < triangleStream.Length; j++) {
-                    var entry = triangleStream[j];
-                    if (entry.x < 0) continue;
-                    triangles.Add(vertexMapping[entry.x]);
-                    triangles.Add(vertexMapping[entry.y]);
-                    triangles.Add(vertexMapping[entry.z]);
-                }
-                mesh.SetSubMesh(i, new SubMeshDescriptor(triangleCount, triangles.Count, MeshTopology.Triangles));
-                mesh.SetTriangles(triangles, i);
-                triangleCount += triangles.Count;
-            }
             mesh.ClearBlendShapes();
-            foreach (var kv in blendShapes)
-                foreach (var weight in kv.Value.Keys.OrderBy(x => x)) {
-                    var (deltaVertices, deltaNormals, deltaTangents) = kv.Value[weight];
-                    if (deltaVertices != null) Array.Resize(ref deltaVertices, newSize);
-                    if (deltaNormals != null) Array.Resize(ref deltaNormals, newSize);
-                    if (deltaTangents != null) Array.Resize(ref deltaTangents, newSize);
-                    mesh.AddBlendShapeFrame(kv.Key, weight, deltaVertices, deltaNormals, deltaTangents);
-                }
+            foreach (var cutter in streamCutters) cutter.Apply();
+            if (bindposes != null) mesh.bindposes = bindposes;
             mesh.RecalculateBounds();
             mesh.UploadMeshData(false);
             removedVerticeIndecies.Clear();
@@ -179,11 +79,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             return mesh;
         }
 
-        abstract class VertexStreamCutter {
-            protected readonly Mesh mesh;
-            protected readonly VertexAttribute attribute;
 
-            public static VertexStreamCutter Get(Mesh mesh, VertexAttribute attribute) {
+        abstract class StreamCutter {
+            protected readonly Mesh mesh;
+            protected int index, offset;
+
+            public static StreamCutter Get(Mesh mesh, VertexAttribute attribute) {
                 if (!mesh.HasVertexAttribute(attribute)) return null;
                 switch (attribute) {
                     case VertexAttribute.Position: return new VertexStreamCutter3(mesh, attribute);
@@ -211,33 +112,36 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                             case 4: return new VertexStreamCutter4(mesh, attribute);
                         }
                         break;
+                    case VertexAttribute.BlendWeight: return new BoneCutter(mesh);
                 }
                 return null;
             }
             
-            protected VertexStreamCutter(Mesh mesh, VertexAttribute attribute) {
+            protected StreamCutter(Mesh mesh) {
                 this.mesh = mesh;
-                this.attribute = attribute;
             }
 
-            public abstract void Move(int index, int offset);
-            public abstract void Apply(int trimSize);
+            public virtual void Next(bool skip) {
+                if (skip) offset++;
+                else if (offset > 0) Move();
+                index++;
+            }
+
+            protected abstract void Move();
+            public abstract void Apply();
         }
 
-        abstract class VertexStreamCutter<T> : VertexStreamCutter where T : struct {
+        abstract class VertexStreamCutter<T> : StreamCutter where T : struct {
+            protected readonly VertexAttribute attribute;
             protected readonly List<T> stream;
             
-            protected VertexStreamCutter(Mesh mesh, VertexAttribute attribute) : base(mesh, attribute) {
+            protected VertexStreamCutter(Mesh mesh, VertexAttribute attribute) : base(mesh) {
+                this.attribute = attribute;
                 stream = new List<T>(mesh.vertexCount);
             }
 
-            public override void Move(int index, int offset) {
-                if (offset <= 0) return;
+            protected override void Move() {
                 stream[index - offset] = stream[index];
-            }
-
-            public override void Apply(int trimSize) {
-                stream.RemoveRange(stream.Count - trimSize, trimSize);
             }
         }
 
@@ -258,8 +162,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
 
-            public override void Apply(int trimSize) {
-                base.Apply(trimSize);
+            public override void Apply() {
                 switch (attribute) {
                     case VertexAttribute.TexCoord0:
                     case VertexAttribute.TexCoord1:
@@ -269,7 +172,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     case VertexAttribute.TexCoord5:
                     case VertexAttribute.TexCoord6:
                     case VertexAttribute.TexCoord7:
-                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream, 0, stream.Count - offset);
                         break;
                     default: throw new NotSupportedException();
                 }
@@ -295,11 +198,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
 
-            public override void Apply(int trimSize) {
-                base.Apply(trimSize);
+            public override void Apply() {
                 switch (attribute) {
-                    case VertexAttribute.Position: mesh.SetVertices(stream); break;
-                    case VertexAttribute.Normal: mesh.SetNormals(stream); break;
+                    case VertexAttribute.Position: mesh.SetVertices(stream, 0, stream.Count - offset); break;
+                    case VertexAttribute.Normal: mesh.SetNormals(stream, 0, stream.Count - offset); break;
                     case VertexAttribute.TexCoord0:
                     case VertexAttribute.TexCoord1:
                     case VertexAttribute.TexCoord2:
@@ -308,7 +210,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     case VertexAttribute.TexCoord5:
                     case VertexAttribute.TexCoord6:
                     case VertexAttribute.TexCoord7:
-                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream, 0, stream.Count - offset);
                         break;
                     default: throw new NotSupportedException();
                 }
@@ -333,10 +235,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
 
-            public override void Apply(int trimSize) {
-                base.Apply(trimSize);
+            public override void Apply() {
                 switch (attribute) {
-                    case VertexAttribute.Tangent: mesh.SetTangents(stream); break;
+                    case VertexAttribute.Tangent: mesh.SetTangents(stream, 0, stream.Count - offset); break;
                     case VertexAttribute.TexCoord0:
                     case VertexAttribute.TexCoord1:
                     case VertexAttribute.TexCoord2:
@@ -345,7 +246,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     case VertexAttribute.TexCoord5:
                     case VertexAttribute.TexCoord6:
                     case VertexAttribute.TexCoord7:
-                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream, 0, stream.Count - offset);
                         break;
                     default: throw new NotSupportedException();
                 }
@@ -360,10 +261,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
 
-            public override void Apply(int trimSize) {
-                base.Apply(trimSize);
+            public override void Apply() {
                 switch (attribute) {
-                    case VertexAttribute.Color: mesh.SetColors(stream); break;
+                    case VertexAttribute.Color: mesh.SetColors(stream, 0, stream.Count - offset); break;
                     default: throw new NotSupportedException();
                 }
             }
@@ -377,11 +277,144 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
 
-            public override void Apply(int trimSize) {
-                base.Apply(trimSize);
+            public override void Apply() {
                 switch (attribute) {
-                    case VertexAttribute.Color: mesh.SetColors(stream); break;
+                    case VertexAttribute.Color: mesh.SetColors(stream, 0, stream.Count - offset); break;
                     default: throw new NotSupportedException();
+                }
+            }
+        }
+
+        sealed class BlendShapeCutter : StreamCutter {
+            readonly float weight;
+            readonly string name;
+            Vector3[] deltaVertices, deltaNormals, deltaTangents;
+
+            public BlendShapeCutter(Mesh mesh, int shapeIndex, int frame) : base(mesh) {
+                name = mesh.GetBlendShapeName(shapeIndex);
+                weight = mesh.GetBlendShapeFrameWeight(shapeIndex, frame);
+                if (mesh.HasVertexAttribute(VertexAttribute.Position)) deltaVertices = new Vector3[mesh.vertexCount];
+                if (mesh.HasVertexAttribute(VertexAttribute.Normal)) deltaNormals = new Vector3[mesh.vertexCount];
+                if (mesh.HasVertexAttribute(VertexAttribute.Tangent)) deltaTangents = new Vector3[mesh.vertexCount];
+                mesh.GetBlendShapeFrameVertices(shapeIndex, frame, deltaVertices, deltaNormals, deltaTangents);
+            }
+
+            protected override void Move() {
+                if (deltaVertices != null) deltaVertices[index - offset] = deltaVertices[index];
+                if (deltaNormals != null) deltaNormals[index - offset] = deltaNormals[index];
+                if (deltaTangents != null) deltaTangents[index - offset] = deltaTangents[index];
+            }
+
+            public override void Apply() {
+                Array.Resize(ref deltaVertices, deltaVertices.Length - offset);
+                Array.Resize(ref deltaNormals, deltaNormals.Length - offset);
+                Array.Resize(ref deltaTangents, deltaTangents.Length - offset);
+                mesh.AddBlendShapeFrame(name, weight, deltaVertices, deltaNormals, deltaTangents);
+            }
+        }
+
+        sealed class BoneCutter : StreamCutter {
+            NativeArray<BoneWeight1> boneWeights;
+            NativeArray<byte> bonesPerVertex;
+            int boneWeightIndex, boneWeightOffset;
+
+            public BoneCutter(Mesh mesh) : base(mesh) {
+                var readonlyBoneWeights = mesh.GetAllBoneWeights();
+                boneWeights = new NativeArray<BoneWeight1>(readonlyBoneWeights.Length, Allocator.Temp);
+                readonlyBoneWeights.CopyTo(boneWeights);
+                bonesPerVertex = new NativeArray<byte>(mesh.vertexCount, Allocator.Temp);
+                mesh.GetBonesPerVertex().CopyTo(bonesPerVertex);
+            }
+
+            public override void Next(bool skip) {
+                byte bonePerVertex = bonesPerVertex[index];
+                if (skip) {
+                    offset++;
+                    boneWeightOffset += bonePerVertex;
+                } else if (offset > 0) Move();
+                index++;
+                boneWeightIndex += bonePerVertex;
+            }
+
+            protected override void Move() {
+                bonesPerVertex[index - offset] = bonesPerVertex[index];
+                for (int i = 0; i < bonesPerVertex[index]; i++)
+                    boneWeights[boneWeightIndex - boneWeightOffset + i] = boneWeights[boneWeightIndex + i];
+            }
+
+            public override void Apply() {
+                mesh.SetBoneWeights(
+                    bonesPerVertex.GetSubArray(0, bonesPerVertex.Length - offset),
+                    boneWeights.GetSubArray(0, boneWeights.Length - boneWeightOffset)
+                );
+                bonesPerVertex.Dispose();
+                boneWeights.Dispose();
+            }
+        }
+
+        sealed class TriangleCutter : StreamCutter {
+            public readonly int[] vertexReferenceCounts;
+            readonly List<int> triangles;
+            readonly Vector3Int[][] streams;
+            readonly int[] vertexMapping;
+            readonly int triangleIndexCount;
+
+            public TriangleCutter(Mesh mesh, HashSet<int> removedVerticeIndecies, HashSet<int> aggressiveRemovedVerticeIndecies) : base(mesh) {
+                streams = new Vector3Int[mesh.subMeshCount][];
+                vertexReferenceCounts = new int[mesh.vertexCount];
+                vertexMapping = new int[mesh.vertexCount];
+                triangles = new List<int>();
+                triangleIndexCount = 0;
+                for (int i = 0; i < streams.Length; i++) {
+                    mesh.GetTriangles(triangles, i);
+                    var triangleStream = new Vector3Int[triangles.Count / 3];
+                    streams[i] = triangleStream;
+                    for (int j = 0; j < triangleStream.Length; j++) {
+                        int offset = j * 3;
+                        var entry = new Vector3Int(triangles[offset], triangles[offset + 1], triangles[offset + 2]);
+                        triangleStream[j] = entry;
+                        if (aggressiveRemovedVerticeIndecies.Contains(entry.x) ||
+                            aggressiveRemovedVerticeIndecies.Contains(entry.y) ||
+                            aggressiveRemovedVerticeIndecies.Contains(entry.z) ||
+                            (removedVerticeIndecies.Contains(entry.x) &&
+                            removedVerticeIndecies.Contains(entry.y) &&
+                            removedVerticeIndecies.Contains(entry.z))) {
+                            triangleStream[j] = new Vector3Int(-1, -1, -1);
+                        } else {
+                            vertexReferenceCounts[entry.x]++;
+                            vertexReferenceCounts[entry.y]++;
+                            vertexReferenceCounts[entry.z]++;
+                            triangleIndexCount += 3;
+                        }
+                    }
+                }
+            }
+
+            public override void Next(bool skip) {
+                vertexMapping[index] = index - offset;
+                base.Next(skip);
+            }
+
+            protected override void Move() {}
+
+            public override void Apply() {
+                mesh.triangles = new int[triangleIndexCount];
+                mesh.subMeshCount = streams.Length;
+                for (int i = 0, offset = 0; i < streams.Length; i++) {
+                    var triangleStream = streams[i];
+                    triangles.Clear();
+                    var requiredCapacity = triangleStream.Length * 3;
+                    if (triangles.Capacity < requiredCapacity) triangles.Capacity = requiredCapacity;
+                    foreach (var entry in triangleStream) {
+                        if (entry.x < 0) continue;
+                        triangles.Add(vertexMapping[entry.x]);
+                        triangles.Add(vertexMapping[entry.y]);
+                        triangles.Add(vertexMapping[entry.z]);
+                    }
+                    int count = triangles.Count;
+                    mesh.SetSubMesh(i, new SubMeshDescriptor(offset, count, MeshTopology.Triangles));
+                    mesh.SetTriangles(triangles, i);
+                    offset += count;
                 }
             }
         }
