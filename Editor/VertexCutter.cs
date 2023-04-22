@@ -46,62 +46,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public Mesh Apply() {
             if (aggressiveRemovedVerticeIndecies.Count == 0 && removedVerticeIndecies.Count == 0)
                 return mesh;
-            List<Vector3> vertices = null;
-            List<Vector3> normals = null;
-            List<Vector4> tangents = null;
-            List<Vector2> uvs = null, uv2s = null, uv3s = null, uv4s = null, uv5s = null, uv6s = null, uv7s = null, uv8s = null;
-            List<Color> colors = null;
+            var streamCutters = Enumerable.Range((int)VertexAttribute.Position, (int)VertexAttribute.BlendWeight)
+                .Select(i => VertexStreamCutter.Get(mesh, (VertexAttribute)i))
+                .Where(c => c != null).ToArray();
             NativeArray<BoneWeight1>? boneWeights = null;
             NativeArray<byte>? bonesPerVertex = null;
             Matrix4x4[] bindposes = null;
-            if (mesh.HasVertexAttribute(VertexAttribute.Position)) {
-                vertices = new List<Vector3>(mesh.vertexCount);
-                mesh.GetVertices(vertices);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.Normal)) {
-                normals = new List<Vector3>(mesh.vertexCount);
-                mesh.GetNormals(normals);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.Tangent)) {
-                tangents = new List<Vector4>(mesh.vertexCount);
-                mesh.GetTangents(tangents);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord0)) {
-                uvs = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(0, uvs);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord1)) {
-                uv2s = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(1, uv2s);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord2)) {
-                uv3s = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(2, uv3s);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord3)) {
-                uv4s = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(3, uv4s);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord4)) {
-                uv5s = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(4, uv5s);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord5)) {
-                uv6s = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(5, uv6s);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord6)) {
-                uv7s = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(6, uv7s);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.TexCoord7)) {
-                uv8s = new List<Vector2>(mesh.vertexCount);
-                mesh.GetUVs(7, uv8s);
-            }
-            if (mesh.HasVertexAttribute(VertexAttribute.Color)) {
-                colors = new List<Color>(mesh.vertexCount);
-                mesh.GetColors(colors);
-            }
             if (mesh.HasVertexAttribute(VertexAttribute.BlendIndices))
                 bindposes = mesh.bindposes;
             if (mesh.HasVertexAttribute(VertexAttribute.BlendWeight)) {
@@ -168,18 +118,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     continue;
                 }
                 if (vertexOffset > 0) {
-                    if (vertices != null) vertices[i - vertexOffset] = vertices[i];
-                    if (normals != null) normals[i - vertexOffset] = normals[i];
-                    if (tangents != null) tangents[i - vertexOffset] = tangents[i];
-                    if (uvs != null) uvs[i - vertexOffset] = uvs[i];
-                    if (uv2s != null) uv2s[i - vertexOffset] = uv2s[i];
-                    if (uv3s != null) uv3s[i - vertexOffset] = uv3s[i];
-                    if (uv4s != null) uv4s[i - vertexOffset] = uv4s[i];
-                    if (uv5s != null) uv5s[i - vertexOffset] = uv5s[i];
-                    if (uv6s != null) uv6s[i - vertexOffset] = uv6s[i];
-                    if (uv7s != null) uv7s[i - vertexOffset] = uv7s[i];
-                    if (uv8s != null) uv8s[i - vertexOffset] = uv8s[i];
-                    if (colors != null) colors[i - vertexOffset] = colors[i];
+                    foreach (var cutter in streamCutters)
+                        cutter.Move(i, vertexOffset);
                     if (bonesPerVertex.HasValue) {
                         var array = bonesPerVertex.Value;
                         array[i - vertexOffset] = array[i];
@@ -196,54 +136,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             int newSize = mesh.vertexCount - vertexOffset;
             mesh.Clear(true);
-            if (vertices != null) {
-                vertices.RemoveRange(newSize, vertexOffset);
-                mesh.SetVertices(vertices);
-            }
-            if (normals != null) {
-                normals.RemoveRange(newSize, vertexOffset);
-                mesh.SetNormals(normals);
-            }
-            if (tangents != null) {
-                tangents.RemoveRange(newSize, vertexOffset);
-                mesh.SetTangents(tangents);
-            }
-            if (uvs != null) {
-                uvs.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(0, uvs);
-            }
-            if (uv2s != null) {
-                uv2s.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(1, uv2s);
-            }
-            if (uv3s != null) {
-                uv3s.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(2, uv3s);
-            }
-            if (uv4s != null) {
-                uv4s.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(3, uv4s);
-            }
-            if (uv5s != null) {
-                uv5s.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(4, uv5s);
-            }
-            if (uv6s != null) {
-                uv6s.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(5, uv6s);
-            }
-            if (uv7s != null) {
-                uv7s.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(6, uv7s);
-            }
-            if (uv8s != null) {
-                uv8s.RemoveRange(newSize, vertexOffset);
-                mesh.SetUVs(7, uv8s);
-            }
-            if (colors != null) {
-                colors.RemoveRange(newSize, vertexOffset);
-                mesh.SetColors(colors);
-            }
+            foreach (var cutter in streamCutters)
+                cutter.Apply(vertexOffset);
             if (boneWeights.HasValue && bonesPerVertex.HasValue) {
                 mesh.SetBoneWeights(
                     bonesPerVertex.Value.GetSubArray(0, newSize),
@@ -283,6 +177,213 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             removedVerticeIndecies.Clear();
             aggressiveRemovedVerticeIndecies.Clear();
             return mesh;
+        }
+
+        abstract class VertexStreamCutter {
+            protected readonly Mesh mesh;
+            protected readonly VertexAttribute attribute;
+
+            public static VertexStreamCutter Get(Mesh mesh, VertexAttribute attribute) {
+                if (!mesh.HasVertexAttribute(attribute)) return null;
+                switch (attribute) {
+                    case VertexAttribute.Position: return new VertexStreamCutter3(mesh, attribute);
+                    case VertexAttribute.Normal: return new VertexStreamCutter3(mesh, attribute);
+                    case VertexAttribute.Tangent: return new VertexStreamCutter4(mesh, attribute);
+                    case VertexAttribute.Color:
+                        switch (mesh.GetVertexAttributeFormat(attribute)) {
+                            case VertexAttributeFormat.UInt8:
+                            case VertexAttributeFormat.UNorm8:
+                                return new VertexStreamCutter4C32(mesh, attribute);
+                            default:
+                                return new VertexStreamCutter4C(mesh, attribute);
+                        }
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7: 
+                        switch (mesh.GetVertexAttributeDimension(attribute)) {
+                            case 2: return new VertexStreamCutter2(mesh, attribute);
+                            case 3: return new VertexStreamCutter3(mesh, attribute);
+                            case 4: return new VertexStreamCutter4(mesh, attribute);
+                        }
+                        break;
+                }
+                return null;
+            }
+            
+            protected VertexStreamCutter(Mesh mesh, VertexAttribute attribute) {
+                this.mesh = mesh;
+                this.attribute = attribute;
+            }
+
+            public abstract void Move(int index, int offset);
+            public abstract void Apply(int trimSize);
+        }
+
+        abstract class VertexStreamCutter<T> : VertexStreamCutter where T : struct {
+            protected readonly List<T> stream;
+            
+            protected VertexStreamCutter(Mesh mesh, VertexAttribute attribute) : base(mesh, attribute) {
+                stream = new List<T>(mesh.vertexCount);
+            }
+
+            public override void Move(int index, int offset) {
+                if (offset <= 0) return;
+                stream[index - offset] = stream[index];
+            }
+
+            public override void Apply(int trimSize) {
+                stream.RemoveRange(stream.Count - trimSize, trimSize);
+            }
+        }
+
+        sealed class VertexStreamCutter2 : VertexStreamCutter<Vector2> {
+            public VertexStreamCutter2(Mesh mesh, VertexAttribute attribute) : base(mesh, attribute) {
+                switch (attribute) {
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7:
+                        mesh.GetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        break;
+                    default: throw new NotSupportedException();
+                }
+            }
+
+            public override void Apply(int trimSize) {
+                base.Apply(trimSize);
+                switch (attribute) {
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7:
+                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        break;
+                    default: throw new NotSupportedException();
+                }
+            }
+        }
+
+        sealed class VertexStreamCutter3 : VertexStreamCutter<Vector3> {
+            public VertexStreamCutter3(Mesh mesh, VertexAttribute attribute) : base(mesh, attribute) {
+                switch (attribute) {
+                    case VertexAttribute.Position: mesh.GetVertices(stream); break;
+                    case VertexAttribute.Normal: mesh.GetNormals(stream); break;
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7:
+                        mesh.GetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        break;
+                    default: throw new NotSupportedException();
+                }
+            }
+
+            public override void Apply(int trimSize) {
+                base.Apply(trimSize);
+                switch (attribute) {
+                    case VertexAttribute.Position: mesh.SetVertices(stream); break;
+                    case VertexAttribute.Normal: mesh.SetNormals(stream); break;
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7:
+                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        break;
+                    default: throw new NotSupportedException();
+                }
+            }
+        }
+
+        sealed class VertexStreamCutter4 : VertexStreamCutter<Vector4> {
+            public VertexStreamCutter4(Mesh mesh, VertexAttribute attribute) : base(mesh, attribute) {
+                switch (attribute) {
+                    case VertexAttribute.Tangent: mesh.GetTangents(stream); break;
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7:
+                        mesh.GetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        break;
+                    default: throw new NotSupportedException();
+                }
+            }
+
+            public override void Apply(int trimSize) {
+                base.Apply(trimSize);
+                switch (attribute) {
+                    case VertexAttribute.Tangent: mesh.SetTangents(stream); break;
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7:
+                        mesh.SetUVs(attribute - VertexAttribute.TexCoord0, stream);
+                        break;
+                    default: throw new NotSupportedException();
+                }
+            }
+        }
+
+        sealed class VertexStreamCutter4C : VertexStreamCutter<Color> {
+            public VertexStreamCutter4C(Mesh mesh, VertexAttribute attribute) : base(mesh, attribute) {
+                switch (attribute) {
+                    case VertexAttribute.Color: mesh.GetColors(stream); break;
+                    default: throw new NotSupportedException();
+                }
+            }
+
+            public override void Apply(int trimSize) {
+                base.Apply(trimSize);
+                switch (attribute) {
+                    case VertexAttribute.Color: mesh.SetColors(stream); break;
+                    default: throw new NotSupportedException();
+                }
+            }
+        }
+
+        sealed class VertexStreamCutter4C32 : VertexStreamCutter<Color32> {
+            public VertexStreamCutter4C32(Mesh mesh, VertexAttribute attribute) : base(mesh, attribute) {
+                switch (attribute) {
+                    case VertexAttribute.Color: mesh.GetColors(stream); break;
+                    default: throw new NotSupportedException();
+                }
+            }
+
+            public override void Apply(int trimSize) {
+                base.Apply(trimSize);
+                switch (attribute) {
+                    case VertexAttribute.Color: mesh.SetColors(stream); break;
+                    default: throw new NotSupportedException();
+                }
+            }
         }
     }
 }
