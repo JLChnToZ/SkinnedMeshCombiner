@@ -54,7 +54,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public static Mesh Combine(
             ICollection<(Renderer, CombineMeshFlags[])> sources, 
             SkinnedMeshRenderer destination,
-            bool mergeSubMeshes = true,
+            MergeFlags mergeFlags = MergeFlags.MergeSubMeshes,
             BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices,
             IDictionary<Transform, Transform> boneRemap = null
         ) {
@@ -63,11 +63,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             int group = Undo.GetCurrentGroup();
             foreach (var (source, bakeFlags) in sources) {
                 if (source is SkinnedMeshRenderer smr)
-                    core.Add(smr, bakeFlags);
+                    core.Add(smr, bakeFlags, mergeFlags);
                 else if (source is MeshRenderer mr)
-                    core.Add(mr, bakeFlags[0] != CombineMeshFlags.None, destination);
+                    core.Add(mr, bakeFlags[0] != CombineMeshFlags.None, destination, mergeFlags);
             }
-            if (mergeSubMeshes) core.MergeSubMeshes();
+            if (mergeFlags.HasFlag(MergeFlags.MergeSubMeshes)) core.MergeSubMeshes();
             var result = core.Combine(destination);
             Undo.SetCurrentGroupName("Combine Meshes");
             Undo.CollapseUndoOperations(group);
@@ -83,7 +83,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             tangents = blendShapeCopyMode.HasFlag(BlendShapeCopyMode.Tangents) ? new List<Vector4>() : null;
         }
 
-        public void Add(SkinnedMeshRenderer source, CombineMeshFlags[] bakeFlags) {
+        public void Add(SkinnedMeshRenderer source, CombineMeshFlags[] bakeFlags, MergeFlags mergeFlags = MergeFlags.None) {
             if (combineInstances.Count == 0)
                 bounds = source.bounds;
             else
@@ -106,6 +106,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     inverseRemapTransform = remapTransform.inverse;
                 }
             }
+            var weights = mesh.boneWeights;
+            PreAllocate(allBones, bones.Length);
+            PreAllocate(allBindposes, bindposes.Count);
+            boneMapping.Clear();
+            boneHasWeights.Clear();
             var vertexCutter = new VertexCutter(mesh);
             for (int i = 0, count = mesh.blendShapeCount; i < count; i++) {
                 if ((bakeFlags[i] != CombineMeshFlags.CombineAndRemoveBlendshapeVertex &&
@@ -121,12 +126,37 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                             vertexCutter.RemoveVertex(k, bakeFlags[i] == CombineMeshFlags.AggressiveRemoveBlendshapeVertex);
                 }
             }
+            if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithoutBones) || mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithZeroScaleBones)) {
+                var boneIndexToRemove = new HashSet<int>();
+                for (int i = 0; i < bindposes.Count; i++) {
+                    if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithoutBones) && bones[i] == null) {
+                        boneIndexToRemove.Add(i);
+                        continue;
+                    }
+                    if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithZeroScaleBones) && bones[i].lossyScale == Vector3.zero) {
+                        boneIndexToRemove.Add(i);
+                        continue;
+                    }
+                }
+                for (int i = 0; i < weights.Length; i++) {
+                    var weight = weights[i];
+                    bool shouldRemove = true;
+                    if (weight.weight0 > 0) {
+                        if (!boneIndexToRemove.Contains(weight.boneIndex0)) shouldRemove = false;
+                    } else if (weight.weight1 > 0) {
+                        if (!boneIndexToRemove.Contains(weight.boneIndex1)) shouldRemove = false;
+                    } else if (weight.weight2 > 0) {
+                        if (!boneIndexToRemove.Contains(weight.boneIndex2)) shouldRemove = false;
+                    } else if (weight.weight3 > 0) {
+                        if (!boneIndexToRemove.Contains(weight.boneIndex3)) shouldRemove = false;
+                    } else {
+                        shouldRemove = false;
+                    }
+                    if (shouldRemove) vertexCutter.RemoveVertex(i, false);
+                }
+            }
             mesh = vertexCutter.Apply();
-            var weights = mesh.boneWeights;
-            PreAllocate(allBones, bones.Length);
-            PreAllocate(allBindposes, bindposes.Count);
-            boneMapping.Clear();
-            boneHasWeights.Clear();
+            weights = mesh.boneWeights;
             foreach (var weight in weights) {
                 if (weight.weight0 > 0) boneHasWeights.Add(weight.boneIndex0);
                 if (weight.weight1 > 0) boneHasWeights.Add(weight.boneIndex1);
@@ -172,6 +202,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             var subMeshCount = mesh.subMeshCount;
             for (int i = 0; i < subMeshCount; i++) {
+                if (sharedMaterials[i] == null && mergeFlags.HasFlag(MergeFlags.RemoveSubMeshWithoutMaterials)) continue;
                 if (LazyInitialize(combineInstances, sharedMaterials[i], out var combines))
                     materials.Add(sharedMaterials[i]);
                 combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
@@ -196,7 +227,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
         }
 
-        public void Add(MeshRenderer source, bool createBone, Renderer destination) {
+        public void Add(MeshRenderer source, bool createBone, Renderer destination, MergeFlags mergeFlags = MergeFlags.None) {
             var sourceTransform = source.transform;
             if (!source.TryGetComponent(out MeshFilter meshFilter)) return;
             if (combineInstances.Count == 0)
@@ -227,8 +258,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             var transform = createBone ? sourceTransform.localToWorldMatrix * destination.worldToLocalMatrix : Matrix4x4.identity;
             for (int i = 0; i < subMeshCount; i++) {
+                if (sharedMaterials[i] == null && mergeFlags.HasFlag(MergeFlags.RemoveSubMeshWithoutMaterials)) continue;
                 if (LazyInitialize(combineInstances, sharedMaterials[i], out var combines))
-                materials.Add(sharedMaterials[i]);
+                    materials.Add(sharedMaterials[i]);
                 combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, new[] { CombineMeshFlags.CombineBlendShape }));
                 boneWeights[(mesh, i)] = Enumerable.Repeat(createBone ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
             }
@@ -406,5 +438,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         CombineBlendShape = 1,
         CombineAndRemoveBlendshapeVertex = 2,
         AggressiveRemoveBlendshapeVertex = 3,
+    }
+
+    [Flags]
+    public enum MergeFlags {
+        None = 0,
+        MergeSubMeshes = 1,
+        RemoveSubMeshWithoutMaterials = 2,
+        RemoveMeshPortionsWithoutBones = 4,
+        RemoveMeshPortionsWithZeroScaleBones = 8,
     }
 }

@@ -58,7 +58,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         List<Renderer> sources = new List<Renderer>();
         SkinnedMeshRenderer destination;
         BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices;
-        bool mergeSubMeshes = true, autoCleanup = true;
+        bool autoCleanup = true;
+        MergeFlags mergeFlags = MergeFlags.MergeSubMeshes;
         Dictionary<Renderer, (CombineMeshFlags[], bool, string[])> bakeBlendShapeMap = new Dictionary<Renderer, (CombineMeshFlags[], bool, string[])>();
         Dictionary<Transform, Transform> boneReamp = new Dictionary<Transform, Transform>();
         HashSet<Transform> rootTransforms = new HashSet<Transform>();
@@ -141,7 +142,19 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             EditorGUILayout.EndHorizontal();
             blendShapeCopyMode = (BlendShapeCopyMode)EditorGUILayout.EnumFlagsField("Blend Shape Copy Mode", blendShapeCopyMode);
-            mergeSubMeshes = EditorGUILayout.ToggleLeft("Merge Sub Meshes With Same Material", mergeSubMeshes);
+            DrawFlag("Merge Sub Meshes With Same Material", MergeFlags.MergeSubMeshes);
+            DrawFlag("Remove Sub Meshes Without Materials", MergeFlags.RemoveSubMeshWithoutMaterials);
+            DrawFlag("Remove Mesh Portions Without Bones", MergeFlags.RemoveMeshPortionsWithoutBones);
+            DrawFlag("Remove Mesh Portions With Zero Scale Bones", MergeFlags.RemoveMeshPortionsWithZeroScaleBones);
+        }
+
+        void DrawFlag(string label, MergeFlags flag) {
+            EditorGUI.BeginChangeCheck();
+            var state = EditorGUILayout.ToggleLeft(label, mergeFlags.HasFlag(flag));
+            if (EditorGUI.EndChangeCheck()) {
+                if (state) mergeFlags |= flag;
+                else mergeFlags &= ~flag;
+            }
         }
 
         void DrawCombineBoneTab() {
@@ -444,7 +457,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
 
         void OnListAdd(ReorderableList list) {
             var count = sources.Count;
-            sources.AddRange(Selection.GetFiltered<Renderer>(SelectionMode.Deep).Where(r => r != null && !sources.Contains(r)));
+            sources.AddRange(Selection.GetFiltered<Renderer>(SelectionMode.Deep).Where(r => r != null && !sources.Contains(r) && (r is SkinnedMeshRenderer || r is MeshRenderer)));
             if (count == sources.Count) return;
             sourceList.index = sources.Count - 1;
             RefreshCombineMeshOptions();
@@ -580,7 +593,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
                     return (source, bakeBlendShapeToggles.Item1);
                 return (source, null);
-            }).ToArray(), destination, mergeSubMeshes, blendShapeCopyMode, boneReamp);
+            }).ToArray(), destination, mergeFlags, blendShapeCopyMode, boneReamp);
             if (mesh != null) {
                 mesh.Optimize();
                 unusedTransforms.ExceptWith(destination.bones);
