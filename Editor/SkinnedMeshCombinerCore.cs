@@ -51,6 +51,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         Bounds bounds;
         Matrix4x4 referenceTransform = Matrix4x4.identity;
         Material dummyMaterial;
+        Transform dummyTransform;
 
         public static Mesh Combine(
             ICollection<(Renderer, CombineMeshFlags[])> sources, 
@@ -128,14 +129,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
             if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithoutBones) || mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithZeroScaleBones)) {
-                var boneIndexToRemove = new HashSet<int>();
+                var boneIndexToRemove = new Dictionary<int, bool>();
                 for (int i = 0; i < bindposes.Count; i++) {
                     if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithoutBones) && bones[i] == null) {
-                        boneIndexToRemove.Add(i);
+                        boneIndexToRemove[i] = true;
                         continue;
                     }
                     if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithZeroScaleBones) && bones[i].lossyScale == Vector3.zero) {
-                        boneIndexToRemove.Add(i);
+                        if (!boneIndexToRemove.ContainsKey(i)) boneIndexToRemove[i] = false;
                         continue;
                     }
                 }
@@ -143,17 +144,21 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     var weight = weights[i];
                     bool shouldRemove = true;
                     if (weight.weight0 > 0) {
-                        if (!boneIndexToRemove.Contains(weight.boneIndex0)) shouldRemove = false;
+                        if (!boneIndexToRemove.ContainsKey(weight.boneIndex0)) shouldRemove = false;
                     } else if (weight.weight1 > 0) {
-                        if (!boneIndexToRemove.Contains(weight.boneIndex1)) shouldRemove = false;
+                        if (!boneIndexToRemove.ContainsKey(weight.boneIndex1)) shouldRemove = false;
                     } else if (weight.weight2 > 0) {
-                        if (!boneIndexToRemove.Contains(weight.boneIndex2)) shouldRemove = false;
+                        if (!boneIndexToRemove.ContainsKey(weight.boneIndex2)) shouldRemove = false;
                     } else if (weight.weight3 > 0) {
-                        if (!boneIndexToRemove.Contains(weight.boneIndex3)) shouldRemove = false;
-                    } else {
-                        shouldRemove = false;
-                    }
-                    if (shouldRemove) vertexCutter.RemoveVertex(i, false);
+                        if (!boneIndexToRemove.ContainsKey(weight.boneIndex3)) shouldRemove = false;
+                    } else continue;
+                    if (shouldRemove)
+                        vertexCutter.RemoveVertex(i,
+                            (weight.weight0 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex0, out bool flag) && flag) ||
+                            (weight.weight1 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex1, out flag) && flag) ||
+                            (weight.weight2 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex2, out flag) && flag) ||
+                            (weight.weight3 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex3, out flag) && flag)
+                        );
                 }
             }
             mesh = vertexCutter.Apply();
@@ -167,6 +172,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             for (int i = 0; i < bindposes.Count; i++) {
                 if (bones[i] == null || !boneHasWeights.Contains(i)) continue;
                 var targetBone = bones[i];
+                if (targetBone == null) {
+                    if (dummyTransform == null) dummyTransform = new GameObject("Temporary GameObject") { hideFlags = HideFlags.HideAndDontSave }.transform;
+                    targetBone = dummyTransform;
+                }
                 var poseMatrix = bindposes[i] * inverseRemapTransform;
                 if (boneRemap != null && boneRemap.TryGetValue(targetBone, out var bone)) {
                     poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
@@ -184,7 +193,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 var key = (targetBone, poseMatrix);
                 if (!bindposeMap.TryGetValue(key, out var index)) {
                     bindposeMap[key] = index = bindposeMap.Count;
-                    allBones.Add(targetBone);
+                    allBones.Add(targetBone == dummyTransform ? null : targetBone);
                     allBindposes.Add(poseMatrix);
                 }
                 boneMapping[i] = index;
@@ -305,6 +314,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     rootBone = FindCommonParent(allBones);
                     if (rootBone == null) rootBone = allBones[0];
                     else foreach (var bone in allBones) {
+                        if (bone == null) continue;
                         if (bone == rootBone) break;
                         if (bone.parent == rootBone) {
                             rootBone = bone;
@@ -358,6 +368,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             blendShapesWeights.Clear();
             if (dummyMaterial != null) DestroyImmediate(dummyMaterial, false);
             dummyMaterial = null;
+            if (dummyTransform != null) DestroyImmediate(dummyTransform.gameObject, false);
+            dummyTransform = null;
         }
 
         public void CopyBlendShapes(Mesh combinedNewMesh, IEnumerable<(CombineInstance, CombineMeshFlags[])> combineInstances) {
