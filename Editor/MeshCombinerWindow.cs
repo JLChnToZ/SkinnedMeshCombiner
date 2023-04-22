@@ -59,7 +59,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         SkinnedMeshRenderer destination;
         BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices;
         bool autoCleanup = true;
-        MergeFlags mergeFlags = MergeFlags.MergeSubMeshes;
+        MergeFlags mergeFlags = MergeFlags.MergeSubMeshes | MergeFlags.RemoveMeshPortionsWithoutBones;
         Dictionary<Renderer, (CombineMeshFlags[], bool, string[])> bakeBlendShapeMap = new Dictionary<Renderer, (CombineMeshFlags[], bool, string[])>();
         Dictionary<Transform, Transform> boneReamp = new Dictionary<Transform, Transform>();
         HashSet<Transform> rootTransforms = new HashSet<Transform>();

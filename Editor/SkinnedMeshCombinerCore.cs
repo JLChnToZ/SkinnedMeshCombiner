@@ -97,8 +97,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             mesh.GetBindposes(bindposes);
             var remapTransform = Matrix4x4.identity;
             var inverseRemapTransform = remapTransform;
+            var rootBone = source.rootBone;
             if (bindposes.Count > 0) {
-                var rootBone = source.rootBone;
                 int rootBoneIndex = rootBone != null ? Array.IndexOf(bones, rootBone) : -1;
                 if (rootBoneIndex < 0) rootBoneIndex = 0; // Fallback to first bone
                 if (combineInstances.Count == 0)
@@ -108,6 +108,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     inverseRemapTransform = remapTransform.inverse;
                 }
             }
+            if (rootBone == null) rootBone = source.transform;
             var weights = mesh.boneWeights;
             PreAllocate(allBones, bones.Length);
             PreAllocate(allBindposes, bindposes.Count);
@@ -130,7 +131,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithoutBones) || mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithZeroScaleBones)) {
                 var boneIndexToRemove = new Dictionary<int, bool>();
-                for (int i = 0; i < bindposes.Count; i++) {
+                for (int i = 0, count = bindposes.Count; i < count; i++) {
                     if (mergeFlags.HasFlag(MergeFlags.RemoveMeshPortionsWithoutBones) && bones[i] == null) {
                         boneIndexToRemove[i] = true;
                         continue;
@@ -169,35 +170,23 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (weight.weight2 > 0) boneHasWeights.Add(weight.boneIndex2);
                 if (weight.weight3 > 0) boneHasWeights.Add(weight.boneIndex3);
             }
-            for (int i = 0; i < bindposes.Count; i++) {
-                if (bones[i] == null || !boneHasWeights.Contains(i)) continue;
-                var targetBone = bones[i];
-                if (targetBone == null) {
-                    if (dummyTransform == null) dummyTransform = new GameObject("Temporary GameObject") { hideFlags = HideFlags.HideAndDontSave }.transform;
-                    targetBone = dummyTransform;
-                }
-                var poseMatrix = bindposes[i] * inverseRemapTransform;
-                if (boneRemap != null && boneRemap.TryGetValue(targetBone, out var bone)) {
-                    poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
-                    targetBone = bone;
-                }
-                LazyInitialize(bindposeMap2, targetBone, out var list);
-                bool hasApproximate = false;
-                foreach (var matrix in list)
-                    if (Approximate(poseMatrix, matrix, 0.001F)) {
-                        poseMatrix = matrix;
-                        hasApproximate = true;
-                        break;
+            int bindposeCount = bindposes.Count, defaultBoneIndex = -1;
+            if (bindposeCount > 0)
+                for (int i = 0; i < bindposeCount; i++)  {
+                    var targetBone = bones[i];
+                    if (!boneHasWeights.Contains(i)) continue;
+                    if (targetBone == null) {
+                        if (dummyTransform == null) dummyTransform = new GameObject("Temporary GameObject") { hideFlags = HideFlags.HideAndDontSave }.transform;
+                        targetBone = dummyTransform;
                     }
-                if (!hasApproximate) list.Add(poseMatrix);
-                var key = (targetBone, poseMatrix);
-                if (!bindposeMap.TryGetValue(key, out var index)) {
-                    bindposeMap[key] = index = bindposeMap.Count;
-                    allBones.Add(targetBone == dummyTransform ? null : targetBone);
-                    allBindposes.Add(poseMatrix);
+                    var poseMatrix = bindposes[i] * inverseRemapTransform;
+                    if (boneRemap != null && boneRemap.TryGetValue(targetBone, out var bone)) {
+                        poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
+                        targetBone = bone;
+                    }
+                    boneMapping[i] = GetBoneIndex(targetBone, poseMatrix);
                 }
-                boneMapping[i] = index;
-            }
+            else defaultBoneIndex = GetBoneIndex(rootBone, Matrix4x4.identity);
             for (int i = 0, newIndex; i < weights.Length; i++) {
                 var weight = weights[i];
                 if (boneMapping.TryGetValue(weight.boneIndex0, out newIndex)) weight.boneIndex0 = newIndex;
@@ -215,7 +204,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (sharedMaterials[i] == null && mergeFlags.HasFlag(MergeFlags.RemoveSubMeshWithoutMaterials)) continue;
                 GetCombines(sharedMaterials[i]).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
                 var subMesh = mesh.GetSubMesh(i);
-                boneWeights[(mesh, i)] = new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount);
+                boneWeights[(mesh, i)] = weights.Length > 0 ? new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount) :
+                    Enumerable.Repeat(new BoneWeight { boneIndex0 = defaultBoneIndex, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);;
             }
             if (vertices != null) mesh.GetVertices(vertices);
             if (normals != null) mesh.GetNormals(normals);
@@ -245,25 +235,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var mesh = Instantiate(meshFilter.sharedMesh);
             var sharedMaterials = source.sharedMaterials;
             var subMeshCount = mesh.subMeshCount;
-            int index = 0;
-            if (!createBone) {
-                LazyInitialize(bindposeMap2, sourceTransform, out var list);
-                var poseMatrix = Matrix4x4.identity;
-                bool hasApproximate = false;
-                foreach (var matrix in list)
-                    if (Approximate(poseMatrix, matrix, 0.001F)) {
-                        poseMatrix = matrix;
-                        hasApproximate = true;
-                        break;
-                    }
-                if (!hasApproximate) list.Add(poseMatrix);
-                var key = (sourceTransform, poseMatrix);
-                if (!bindposeMap.TryGetValue(key, out index)) {
-                    bindposeMap[key] = index = bindposeMap.Count;
-                    allBindposes.Add(Matrix4x4.identity);
-                    allBones.Add(sourceTransform);
-                }
-            }
+            int index = createBone ? 0 : GetBoneIndex(sourceTransform, Matrix4x4.identity);
             var transform = createBone ? sourceTransform.localToWorldMatrix * destination.worldToLocalMatrix : Matrix4x4.identity;
             for (int i = 0; i < subMeshCount; i++) {
                 if (sharedMaterials[i] == null && mergeFlags.HasFlag(MergeFlags.RemoveSubMeshWithoutMaterials)) continue;
@@ -274,6 +246,25 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 Undo.RecordObject(source, "Combine Meshes");
                 source.enabled = false;
             }
+        }
+
+        int GetBoneIndex(Transform bone, Matrix4x4 poseMatrix) {
+            LazyInitialize(bindposeMap2, bone, out var list);
+            bool hasApproximate = false;
+            foreach (var matrix in list)
+                if (Approximate(poseMatrix, matrix, 0.001F)) {
+                    poseMatrix = matrix;
+                    hasApproximate = true;
+                    break;
+                }
+            if (!hasApproximate) list.Add(poseMatrix);
+            var key = (bone, poseMatrix);
+            if (!bindposeMap.TryGetValue(key, out var index)) {
+                bindposeMap[key] = index = bindposeMap.Count;
+                allBones.Add(bone == dummyTransform ? null : bone);
+                allBindposes.Add(poseMatrix);
+            }
+            return index;
         }
 
         public void MergeSubMeshes() {
