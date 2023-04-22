@@ -34,6 +34,22 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         Tangents = 0x4,
     }
 
+    public enum CombineMeshFlags {
+        None = 0,
+        CombineBlendShape = 1,
+        CombineAndRemoveBlendshapeVertex = 2,
+        AggressiveRemoveBlendshapeVertex = 3,
+    }
+
+    [Flags]
+    public enum MergeFlags {
+        None = 0,
+        MergeSubMeshes = 1,
+        RemoveSubMeshWithoutMaterials = 2,
+        RemoveMeshPortionsWithoutBones = 4,
+        RemoveMeshPortionsWithZeroScaleBones = 8,
+    }
+
     public static class Utils {
 
         public static bool LazyInitialize<TKey, TValue>(IDictionary<TKey, TValue> dict, TKey key, out TValue value) where TValue : new() {

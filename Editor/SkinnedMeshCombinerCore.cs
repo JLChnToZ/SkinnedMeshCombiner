@@ -50,6 +50,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         readonly Dictionary<string, float> blendShapesWeights = new Dictionary<string, float>();
         Bounds bounds;
         Matrix4x4 referenceTransform = Matrix4x4.identity;
+        Material dummyMaterial;
 
         public static Mesh Combine(
             ICollection<(Renderer, CombineMeshFlags[])> sources, 
@@ -203,9 +204,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var subMeshCount = mesh.subMeshCount;
             for (int i = 0; i < subMeshCount; i++) {
                 if (sharedMaterials[i] == null && mergeFlags.HasFlag(MergeFlags.RemoveSubMeshWithoutMaterials)) continue;
-                if (LazyInitialize(combineInstances, sharedMaterials[i], out var combines))
-                    materials.Add(sharedMaterials[i]);
-                combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
+                GetCombines(sharedMaterials[i]).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
                 var subMesh = mesh.GetSubMesh(i);
                 boneWeights[(mesh, i)] = new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount);
             }
@@ -259,9 +258,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var transform = createBone ? sourceTransform.localToWorldMatrix * destination.worldToLocalMatrix : Matrix4x4.identity;
             for (int i = 0; i < subMeshCount; i++) {
                 if (sharedMaterials[i] == null && mergeFlags.HasFlag(MergeFlags.RemoveSubMeshWithoutMaterials)) continue;
-                if (LazyInitialize(combineInstances, sharedMaterials[i], out var combines))
-                    materials.Add(sharedMaterials[i]);
-                combines.Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, new[] { CombineMeshFlags.CombineBlendShape }));
+                GetCombines(sharedMaterials[i]).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, new[] { CombineMeshFlags.CombineBlendShape }));
                 boneWeights[(mesh, i)] = Enumerable.Repeat(createBone ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
             }
             if (destination != source) {
@@ -359,6 +356,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             materials.Clear();
             blendShapesStore?.Clear();
             blendShapesWeights.Clear();
+            if (dummyMaterial != null) DestroyImmediate(dummyMaterial, false);
+            dummyMaterial = null;
         }
 
         public void CopyBlendShapes(Mesh combinedNewMesh, IEnumerable<(CombineInstance, CombineMeshFlags[])> combineInstances) {
@@ -431,21 +430,17 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             ApplyBlendShape(normals, null, deltaNormals, weight, 0, vertexCount);
             ApplyBlendShape(tangents, null, deltaTangents, weight, 0, vertexCount);
         }
-    }
 
-    public enum CombineMeshFlags {
-        None = 0,
-        CombineBlendShape = 1,
-        CombineAndRemoveBlendshapeVertex = 2,
-        AggressiveRemoveBlendshapeVertex = 3,
-    }
-
-    [Flags]
-    public enum MergeFlags {
-        None = 0,
-        MergeSubMeshes = 1,
-        RemoveSubMeshWithoutMaterials = 2,
-        RemoveMeshPortionsWithoutBones = 4,
-        RemoveMeshPortionsWithZeroScaleBones = 8,
+        List<(CombineInstance, CombineMeshFlags[])> GetCombines(Material material) {
+            var materialToIndex = material;
+            if (materialToIndex == null) {
+                if (dummyMaterial == null) // To prevents null reference exception when material is null.
+                    dummyMaterial = new Material(Shader.Find("Hidden/InternalErrorShader"));
+                materialToIndex = dummyMaterial;
+            }
+            if (LazyInitialize(combineInstances, materialToIndex, out var combines))
+                materials.Add(material);
+            return combines;
+        }
     }
 }
