@@ -34,7 +34,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         Tangents = 0x4,
     }
 
-    public enum CombineMeshFlags {
+    public enum CombineBlendshapeFlags : byte {
         None = 0,
         CombineBlendShape = 1,
         CombineAndRemoveBlendshapeVertex = 2,
@@ -42,12 +42,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     }
 
     [Flags]
-    public enum MergeFlags {
+    public enum CombineMeshFlags : byte {
         None = 0,
         MergeSubMeshes = 1,
         RemoveSubMeshWithoutMaterials = 2,
         RemoveMeshPortionsWithoutBones = 4,
         RemoveMeshPortionsWithZeroScaleBones = 8,
+        CreateBoneForNonSkinnedMesh = 16,
     }
 
     public static class Utils {
