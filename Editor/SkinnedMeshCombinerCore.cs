@@ -203,7 +203,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var subMeshCount = mesh.subMeshCount;
             for (int i = 0; i < subMeshCount; i++) {
                 var sharedMaterial = i < sharedMaterials.Length ? sharedMaterials[i] : null;
-                if (sharedMaterial && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
+                if (sharedMaterial == null && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
                 GetCombines(sharedMaterial).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
                 var subMesh = mesh.GetSubMesh(i);
                 boneWeights[(mesh, i)] = weights.Length > 0 ? new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount) :

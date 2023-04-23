@@ -148,7 +148,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         }
                         break;
                     case VertexAttribute.BlendWeight:
-                        if (!mesh.HasVertexAttribute(VertexAttribute.BlendIndices))
+                        if (mesh.HasVertexAttribute(VertexAttribute.BlendIndices))
                             return new BoneCutter(mesh);
                         break;
                     case VertexAttribute.BlendIndices: return new BindposeCutter(mesh);
