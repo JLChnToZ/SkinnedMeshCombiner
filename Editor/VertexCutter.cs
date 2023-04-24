@@ -83,6 +83,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public void Flush() {
             if (streamCutters == null) throw new ObjectDisposedException(nameof(VertexCutter));
             if (isFlushed) return;
+            foreach (var cutter in streamCutters) cutter.BeforeFlush();
             for (int i = 0; i < vertexCount; i++) {
                 bool skip = vertexReferenceCounts[i] == 0;
                 foreach (var cutter in streamCutters) cutter.Next(skip);
@@ -157,6 +158,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             
             protected StreamCutter() { }
+
+            public virtual void BeforeFlush() {}
 
             public virtual void Next(bool skip) {
                 if (skip) offset++;
@@ -394,18 +397,26 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         sealed class TriangleCutter : StreamCutter {
+            readonly Mesh mesh;
             public readonly int[] vertexReferenceCounts;
             readonly List<int> triangles;
             readonly Vector3Int[][] streams;
             readonly int[] vertexMapping;
-            readonly int triangleIndexCount;
+            int triangleIndexCount;
+            readonly HashSet<int> removedVerticeIndecies, aggressiveRemovedVerticeIndecies;
 
             public TriangleCutter(Mesh mesh, HashSet<int> removedVerticeIndecies, HashSet<int> aggressiveRemovedVerticeIndecies) {
+                this.mesh = mesh;
+                this.removedVerticeIndecies = removedVerticeIndecies;
+                this.aggressiveRemovedVerticeIndecies = aggressiveRemovedVerticeIndecies;
                 streams = new Vector3Int[mesh.subMeshCount][];
                 vertexReferenceCounts = new int[mesh.vertexCount];
                 vertexMapping = new int[mesh.vertexCount];
                 triangles = new List<int>();
                 triangleIndexCount = 0;
+            }
+
+            public override void BeforeFlush() {
                 for (int i = 0; i < streams.Length; i++) {
                     mesh.GetTriangles(triangles, i);
                     var triangleStream = new Vector3Int[triangles.Count / 3];
@@ -413,7 +424,6 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     for (int j = 0; j < triangleStream.Length; j++) {
                         int offset = j * 3;
                         var entry = new Vector3Int(triangles[offset], triangles[offset + 1], triangles[offset + 2]);
-                        triangleStream[j] = entry;
                         if (aggressiveRemovedVerticeIndecies.Contains(entry.x) ||
                             aggressiveRemovedVerticeIndecies.Contains(entry.y) ||
                             aggressiveRemovedVerticeIndecies.Contains(entry.z) ||
@@ -425,6 +435,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                             vertexReferenceCounts[entry.x]++;
                             vertexReferenceCounts[entry.y]++;
                             vertexReferenceCounts[entry.z]++;
+                            triangleStream[j] = entry;
                             triangleIndexCount += 3;
                         }
                     }

@@ -400,7 +400,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var (blendShapeFlags, combineMeshFlags, toggleState, blendShapeNameMap) = bakeBlendShapeToggles;
             if (blendShapeFlags == null || blendShapeNameMap == null) return;
             EditorGUI.BeginChangeCheck();
-            if (blendShapeNameMap.Length > 0 || renderer is MeshRenderer) toggleState = EditorGUI.Foldout(rect2, toggleState, GUIContent.none);
+            toggleState = EditorGUI.Foldout(rect2, toggleState, GUIContent.none);
             if (EditorGUI.EndChangeCheck()) bakeBlendShapeMap[renderer] = (blendShapeFlags, combineMeshFlags, toggleState, blendShapeNameMap);
             if (!toggleState) return;
             rect2.width = rect.width;
@@ -414,8 +414,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 newFlags = DrawFlag(newFlags, rect2, "Remove mesh portions with 0-scale bones", CombineMeshFlags.RemoveMeshPortionsWithZeroScaleBones);
                 rect2.y += EditorGUIUtility.singleLineHeight;
                 if (newFlags != combineMeshFlags) bakeBlendShapeMap[renderer] = (blendShapeFlags, newFlags, toggleState, blendShapeNameMap);
+                if (blendShapeFlags.Length <= 0) return;
                 bool state = false, isMixed = false, isMixed2 = false;
-                CombineBlendshapeFlags states2 = CombineBlendshapeFlags.None;
+                var states2 = CombineBlendshapeFlags.None;
                 for (var i = 0; i < blendShapeFlags.Length; i++) {
                     bool currentState = blendShapeFlags[i] != CombineBlendshapeFlags.None;
                     rect2.width = rect.width - 128;
@@ -468,8 +469,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             var source = sources[index];
             if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles)) {
                 var (blendShapeFlags, _, toggleState, blendShapeNameMap) = bakeBlendShapeToggles;
-                if (blendShapeFlags != null && blendShapeNameMap != null && toggleState)
-                    return EditorGUIUtility.singleLineHeight * (source is MeshRenderer ? 2 : blendShapeNameMap.Length + 4);
+                if (toggleState)
+                    return EditorGUIUtility.singleLineHeight * (source is SkinnedMeshRenderer ? blendShapeFlags != null && blendShapeNameMap != null ? blendShapeNameMap.Length + 4 : 4 : 2);
             }
             return EditorGUIUtility.singleLineHeight;
         }
@@ -503,7 +504,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         mesh = meshFilter.sharedMesh;
                 }
                 if (mesh == null) continue;
-                int length = skinnedMeshRenderer != null ? mesh.blendShapeCount : 1;
+                int length = skinnedMeshRenderer != null ? mesh.blendShapeCount : 0;
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles)) {
                     if (bakeBlendShapeToggles.Item1.Length != length)
                         bakeBlendShapeToggles.Item1 = new CombineBlendshapeFlags[length];

@@ -136,7 +136,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                             boneIndexToRemove[i] = true;
                             continue;
                         }
-                        if (mergeFlags.HasFlag(CombineMeshFlags.RemoveMeshPortionsWithZeroScaleBones) && bones[i].lossyScale == Vector3.zero) {
+                        if (mergeFlags.HasFlag(CombineMeshFlags.RemoveMeshPortionsWithZeroScaleBones) && bones[i].lossyScale.magnitude < 0.0001F) {
                             if (!boneIndexToRemove.ContainsKey(i)) boneIndexToRemove[i] = false;
                             continue;
                         }
