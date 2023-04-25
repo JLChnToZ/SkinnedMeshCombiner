@@ -86,11 +86,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         public void Add(SkinnedMeshRenderer source, CombineBlendshapeFlags[] bakeFlags, CombineMeshFlags mergeFlags = CombineMeshFlags.None) {
+            var orgMesh = source.sharedMesh;
+            if (orgMesh == null || orgMesh.vertexCount <= 0) return;
             if (combineInstances.Count == 0)
                 bounds = source.bounds;
             else
                 bounds.Encapsulate(source.bounds);
-            var orgMesh = source.sharedMesh;
             var mesh = Instantiate(orgMesh);
             var sharedMaterials = source.sharedMaterials;
             var bones = source.bones;
@@ -164,6 +165,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
                 mesh = vertexCutter.Apply(mesh);
             }
+            if (mesh.vertexCount <= 0) {
+                DestroyImmediate(mesh, false);
+                return;
+            }
             weights = mesh.boneWeights;
             foreach (var weight in weights) {
                 if (weight.weight0 > 0) boneHasWeights.Add(weight.boneIndex0);
@@ -202,12 +207,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             var subMeshCount = mesh.subMeshCount;
             for (int i = 0; i < subMeshCount; i++) {
+                var subMesh = mesh.GetSubMesh(i);
+                if (subMesh.vertexCount <= 0) continue;
                 var sharedMaterial = i < sharedMaterials.Length ? sharedMaterials[i] : null;
                 if (sharedMaterial == null && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
                 GetCombines(sharedMaterial).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
-                var subMesh = mesh.GetSubMesh(i);
                 boneWeights[(mesh, i)] = weights.Length > 0 ? new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount) :
-                    Enumerable.Repeat(new BoneWeight { boneIndex0 = defaultBoneIndex, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);;
+                    Enumerable.Repeat(new BoneWeight { boneIndex0 = defaultBoneIndex, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
             }
             if (vertices != null) mesh.GetVertices(vertices);
             if (normals != null) mesh.GetNormals(normals);
@@ -230,16 +236,19 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public void Add(MeshRenderer source, Renderer destination, CombineMeshFlags mergeFlags = CombineMeshFlags.CreateBoneForNonSkinnedMesh) {
             var sourceTransform = source.transform;
             if (!source.TryGetComponent(out MeshFilter meshFilter)) return;
+            var orgMesh = meshFilter.sharedMesh;
+            if (orgMesh == null || orgMesh.vertexCount <= 0) return;
             if (combineInstances.Count == 0)
                 bounds = source.bounds;
             else
                 bounds.Encapsulate(source.bounds);
-            var mesh = Instantiate(meshFilter.sharedMesh);
+            var mesh = Instantiate(orgMesh);
             var sharedMaterials = source.sharedMaterials;
             var subMeshCount = mesh.subMeshCount;
             int index = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? 0 : GetBoneIndex(sourceTransform, Matrix4x4.identity);
             var transform = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? sourceTransform.localToWorldMatrix * destination.worldToLocalMatrix : Matrix4x4.identity;
             for (int i = 0; i < subMeshCount; i++) {
+                if (mesh.GetSubMesh(i).vertexCount <= 0) continue;
                 var sharedMaterial = i < sharedMaterials.Length ? sharedMaterials[i] : null;
                 if (sharedMaterial == null && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
                 GetCombines(sharedMaterial).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, new[] { CombineBlendshapeFlags.CombineBlendShape }));
