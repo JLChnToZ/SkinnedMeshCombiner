@@ -244,10 +244,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 bounds.Encapsulate(source.bounds);
             var mesh = Instantiate(orgMesh);
             var sharedMaterials = source.sharedMaterials;
-            var subMeshCount = mesh.subMeshCount;
             int index = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? 0 : GetBoneIndex(sourceTransform, Matrix4x4.identity);
             var transform = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? sourceTransform.localToWorldMatrix * destination.worldToLocalMatrix : Matrix4x4.identity;
-            for (int i = 0; i < subMeshCount; i++) {
+            for (int i = 0, count = mesh.subMeshCount; i < count; i++) {
                 if (mesh.GetSubMesh(i).vertexCount <= 0) continue;
                 var sharedMaterial = i < sharedMaterials.Length ? sharedMaterials[i] : null;
                 if (sharedMaterial == null && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
