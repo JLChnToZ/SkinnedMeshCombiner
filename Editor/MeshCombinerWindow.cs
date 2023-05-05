@@ -56,7 +56,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         int currentTab;
         Vector2 sourceListScrollPos, boneMergeScrollPos, unusedObjectScrollPos;
         List<Renderer> sources = new List<Renderer>();
-        SkinnedMeshRenderer destination;
+        Renderer destination;
         BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices;
         bool autoCleanup = true;
         CombineMeshFlags mergeFlags = CombineMeshFlags.MergeSubMeshes | CombineMeshFlags.RemoveMeshPortionsWithoutBones;
@@ -135,10 +135,24 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             sourceList.DoLayoutList();
             EditorGUILayout.EndScrollView();
             EditorGUILayout.BeginHorizontal();
-            destination = EditorGUILayout.ObjectField("Destination", destination, typeof(SkinnedMeshRenderer), true) as SkinnedMeshRenderer;
-            if (destination == null && GUILayout.Button("Auto Create", GUILayout.ExpandWidth(false))) {
-                destination = AutoCreateSkinnedMeshRenderer();
-                EditorGUIUtility.PingObject(destination);
+            EditorGUI.BeginChangeCheck();
+            var newDestination = EditorGUILayout.ObjectField("Destination", destination, typeof(Renderer), true) as Renderer;
+            if (EditorGUI.EndChangeCheck() &&
+                (newDestination is SkinnedMeshRenderer ||
+                (newDestination is MeshRenderer && newDestination.TryGetComponent(out MeshFilter _))))
+                destination = newDestination;
+            if (destination == null) {
+                EditorGUI.BeginDisabledGroup(true);
+                GUILayout.Label("Auto Create", EditorStyles.miniButtonLeft, GUILayout.ExpandWidth(false));
+                EditorGUI.EndDisabledGroup();
+                if (GUILayout.Button("Skinned", EditorStyles.miniButtonMid, GUILayout.ExpandWidth(false))) {
+                    destination = AutoCreateRenderer<SkinnedMeshRenderer>();
+                    EditorGUIUtility.PingObject(destination);
+                }
+                if (GUILayout.Button("Mesh Renderer", EditorStyles.miniButtonRight, GUILayout.ExpandWidth(false))) {
+                    destination = AutoCreateRenderer<MeshRenderer>();
+                    EditorGUIUtility.PingObject(destination);
+                }
             }
             EditorGUILayout.EndHorizontal();
             blendShapeCopyMode = (BlendShapeCopyMode)EditorGUILayout.EnumFlagsField("Blend Shape Copy Mode", blendShapeCopyMode);
@@ -302,13 +316,16 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             EditorGUILayout.EndHorizontal();
         }
 
-        SkinnedMeshRenderer AutoCreateSkinnedMeshRenderer() {
+        Renderer AutoCreateRenderer<T>() where T : Renderer {
             var commonParent = FindCommonParent(sources.Select(x => x.transform));
-            var newChild = new GameObject("Combined Mesh", typeof(SkinnedMeshRenderer));
+            var type = typeof(T);
+            var newChild = type.Name == "MeshRenderer" ?
+                new GameObject("Combined Mesh", type, typeof(MeshFilter)) :
+                new GameObject("Combined Mesh", type);
             if (commonParent != null) newChild.transform.SetParent(commonParent, false);
             GameObjectUtility.EnsureUniqueNameForSibling(newChild);
-            Undo.RegisterCreatedObjectUndo(newChild, "Auto Create Skinned Mesh Renderer");
-            return newChild.GetComponent<SkinnedMeshRenderer>();
+            Undo.RegisterCreatedObjectUndo(newChild, $"Auto Create {type.Name}");
+            return newChild.GetComponent<Renderer>();
         }
 
         void UpdateSafeDeleteObjects() {
@@ -334,7 +351,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     var transform = hierarchyWalker.Pop();
                     if (transform == null) continue;
                     checkObjects.Add(transform.gameObject);
-                    checkObjects.UnionWith(transform.GetComponents<Component>());
+                    checkObjects.UnionWith(transform.GetComponents<Component>().SelectMany(InspectKnownComponents));
                     foreach (Transform child in transform) hierarchyWalker.Push(child);
                 }
                 bool hasReference = false;
@@ -354,6 +371,48 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (!hasReference) safeDeleteTransforms.Add(unusedObject);
             }
             EditorUtility.ClearProgressBar();
+        }
+
+        IEnumerable<Component> InspectKnownComponents(Component sourceComponent) {
+            if (sourceComponent == null) yield break;
+            yield return sourceComponent;
+            var type = sourceComponent.GetType();
+            Stack<Transform> hierarchyWalker;
+            HashSet<Transform> excludeTransformSet = null;
+            try {
+                if (type.Namespace == "VRC.SDK3.Dynamics.Contact.Components" && type.Name == "VRCPhysBone") {
+                    dynamic vrcPhysBone = sourceComponent;
+                    Transform root = vrcPhysBone.transform;
+                    if (root == null) root = sourceComponent.transform;
+                    List<Transform> excludes = vrcPhysBone.ignoreTransforms;
+                    if (excludes != null) excludeTransformSet = new HashSet<Transform>(excludes);
+                    hierarchyWalker = new Stack<Transform>();
+                    hierarchyWalker.Push(root);
+                } else if (type.Namespace == "" && type.Name == "DynamicBone") {
+                    dynamic dynamicBone = sourceComponent;
+                    Transform root = dynamicBone.m_Root;
+                    List<Transform> excludes = dynamicBone.m_Exclusions;
+                    if (excludes != null) excludeTransformSet = new HashSet<Transform>(excludes);
+                    hierarchyWalker = new Stack<Transform>();
+                    hierarchyWalker.Push(root);
+                } else if (type.Namespace == "VRM" && type.Name == "SpringBone") {
+                    dynamic springBone = sourceComponent;
+                    Transform[] roots = springBone.RootBones;
+                    if (roots == null || roots.Length == 0) yield break;
+                    hierarchyWalker = new Stack<Transform>(roots);
+                } else yield break;
+            } catch (System.Exception ex) {
+                Debug.LogWarning($"Failed to inspect component {sourceComponent.name} ({type.FullName}): {ex.Message}");
+                yield break;
+            }
+            if (hierarchyWalker == null) yield break;
+            while (hierarchyWalker.Count > 0) {
+                var transform = hierarchyWalker.Pop();
+                if (transform == null) continue;
+                if (excludeTransformSet == null || !excludeTransformSet.Contains(transform))
+                    yield return transform;
+                foreach (Transform child in transform) hierarchyWalker.Push(child);
+            }
         }
 
         void SafeDeleteAllObjects(bool hideOnly = false) {
@@ -598,7 +657,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             bool shouldPingDestination = false;
             if (destination == null) {
-                destination = AutoCreateSkinnedMeshRenderer();
+                destination = AutoCreateRenderer<SkinnedMeshRenderer>();
                 shouldPingDestination = true;
             }
             var saveAssetDefaultPath = sources.Select(source => {
@@ -620,7 +679,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }).ToArray(), destination, mergeFlags, blendShapeCopyMode, boneReamp);
             if (mesh != null) {
                 mesh.Optimize();
-                unusedTransforms.ExceptWith(destination.bones);
+                if (destination is SkinnedMeshRenderer skinnedMeshRenderer)
+                    unusedTransforms.ExceptWith(skinnedMeshRenderer.bones);
                 unusedTransforms.Remove(destination.transform);
                 var path = EditorUtility.SaveFilePanelInProject("Save Mesh", mesh.name, "asset", "Save Combined Mesh", saveAssetDefaultPath);
                 if (!string.IsNullOrEmpty(path)) AssetDatabase.CreateAsset(mesh, path);

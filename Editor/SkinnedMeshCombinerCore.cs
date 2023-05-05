@@ -55,19 +55,25 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
 
         public static Mesh Combine(
             ICollection<(Renderer, CombineBlendshapeFlags[], CombineMeshFlags)> sources, 
-            SkinnedMeshRenderer destination,
+            Renderer destination,
             CombineMeshFlags mergeFlags = CombineMeshFlags.MergeSubMeshes,
             BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices,
             IDictionary<Transform, Transform> boneRemap = null
         ) {
+            var disallowedFlags = CombineMeshFlags.None;
+            if (!(destination is SkinnedMeshRenderer)) {
+                mergeFlags |= CombineMeshFlags.BakeMesh;
+                disallowedFlags = CombineMeshFlags.CreateBoneForNonSkinnedMesh;
+                blendShapeCopyMode = BlendShapeCopyMode.None;
+            }
             var core = new SkinnedMeshCombinerCore(blendShapeCopyMode, boneRemap);
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
             foreach (var (source, bakeFlags, localMergeFlags) in sources) {
                 if (source is SkinnedMeshRenderer smr)
-                    core.Add(smr, bakeFlags, mergeFlags | localMergeFlags);
+                    core.Add(smr, bakeFlags, (mergeFlags | localMergeFlags) & ~disallowedFlags);
                 else if (source is MeshRenderer mr)
-                    core.Add(mr, destination, mergeFlags | localMergeFlags);
+                    core.Add(mr, destination, (mergeFlags | localMergeFlags) & ~disallowedFlags);
             }
             if (mergeFlags.HasFlag(CombineMeshFlags.MergeSubMeshes)) core.MergeSubMeshes();
             var result = core.Combine(destination);
@@ -80,9 +86,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public SkinnedMeshCombinerCore(BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices, IDictionary<Transform, Transform> boneRemap = null) {
             this.blendShapeCopyMode = blendShapeCopyMode;
             this.boneRemap = boneRemap;
-            vertices = blendShapeCopyMode.HasFlag(BlendShapeCopyMode.Vertices) ? new List<Vector3>() : null;
-            normals = blendShapeCopyMode.HasFlag(BlendShapeCopyMode.Normals) ? new List<Vector3>() : null;
-            tangents = blendShapeCopyMode.HasFlag(BlendShapeCopyMode.Tangents) ? new List<Vector4>() : null;
+            vertices = new List<Vector3>();
+            normals = new List<Vector3>();
+            tangents = new List<Vector4>();
         }
 
         public void Add(SkinnedMeshRenderer source, CombineBlendshapeFlags[] bakeFlags, CombineMeshFlags mergeFlags = CombineMeshFlags.None) {
@@ -93,6 +99,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             else
                 bounds.Encapsulate(source.bounds);
             var mesh = Instantiate(orgMesh);
+            if (mergeFlags.HasFlag(CombineMeshFlags.BakeMesh))
+                source.BakeMesh(mesh);
             var sharedMaterials = source.sharedMaterials;
             var bones = source.bones;
             mesh.GetBindposes(bindposes);
@@ -169,51 +177,54 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 DestroyImmediate(mesh, false);
                 return;
             }
-            weights = mesh.boneWeights;
-            foreach (var weight in weights) {
-                if (weight.weight0 > 0) boneHasWeights.Add(weight.boneIndex0);
-                if (weight.weight1 > 0) boneHasWeights.Add(weight.boneIndex1);
-                if (weight.weight2 > 0) boneHasWeights.Add(weight.boneIndex2);
-                if (weight.weight3 > 0) boneHasWeights.Add(weight.boneIndex3);
-            }
-            int bindposeCount = bindposes.Count, defaultBoneIndex = -1;
-            if (bindposeCount > 0)
-                for (int i = 0; i < bindposeCount; i++)  {
-                    var targetBone = bones[i];
-                    if (!boneHasWeights.Contains(i)) continue;
-                    if (targetBone == null) {
-                        if (dummyTransform == null) dummyTransform = new GameObject("Temporary GameObject") { hideFlags = HideFlags.HideAndDontSave }.transform;
-                        targetBone = dummyTransform;
-                    }
-                    var poseMatrix = bindposes[i] * inverseRemapTransform;
-                    if (boneRemap != null && boneRemap.TryGetValue(targetBone, out var bone)) {
-                        poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
-                        targetBone = bone;
-                    }
-                    boneMapping[i] = GetBoneIndex(targetBone, poseMatrix);
+            int defaultBoneIndex = -1;
+            if (!mergeFlags.HasFlag(CombineMeshFlags.BakeMesh)) {
+                weights = mesh.boneWeights;
+                foreach (var weight in weights) {
+                    if (weight.weight0 > 0) boneHasWeights.Add(weight.boneIndex0);
+                    if (weight.weight1 > 0) boneHasWeights.Add(weight.boneIndex1);
+                    if (weight.weight2 > 0) boneHasWeights.Add(weight.boneIndex2);
+                    if (weight.weight3 > 0) boneHasWeights.Add(weight.boneIndex3);
                 }
-            else defaultBoneIndex = GetBoneIndex(rootBone, Matrix4x4.identity);
-            for (int i = 0, newIndex; i < weights.Length; i++) {
-                var weight = weights[i];
-                if (boneMapping.TryGetValue(weight.boneIndex0, out newIndex)) weight.boneIndex0 = newIndex;
-                else { weight.boneIndex0 = 0; weight.weight0 = 0; }
-                if (boneMapping.TryGetValue(weight.boneIndex1, out newIndex)) weight.boneIndex1 = newIndex;
-                else { weight.boneIndex1 = 0; weight.weight1 = 0; }
-                if (boneMapping.TryGetValue(weight.boneIndex2, out newIndex)) weight.boneIndex2 = newIndex;
-                else { weight.boneIndex2 = 0; weight.weight2 = 0; }
-                if (boneMapping.TryGetValue(weight.boneIndex3, out newIndex)) weight.boneIndex3 = newIndex;
-                else { weight.boneIndex3 = 0; weight.weight3 = 0; }
-                weights[i] = weight;
+                int bindposeCount = bindposes.Count;
+                if (bindposeCount > 0)
+                    for (int i = 0; i < bindposeCount; i++)  {
+                        var targetBone = bones[i];
+                        if (!boneHasWeights.Contains(i)) continue;
+                        if (targetBone == null) {
+                            if (dummyTransform == null) dummyTransform = new GameObject("Temporary GameObject") { hideFlags = HideFlags.HideAndDontSave }.transform;
+                            targetBone = dummyTransform;
+                        }
+                        var poseMatrix = bindposes[i] * inverseRemapTransform;
+                        if (boneRemap != null && boneRemap.TryGetValue(targetBone, out var bone)) {
+                            poseMatrix = bone.worldToLocalMatrix * targetBone.localToWorldMatrix * poseMatrix;
+                            targetBone = bone;
+                        }
+                        boneMapping[i] = GetBoneIndex(targetBone, poseMatrix);
+                    }
+                else defaultBoneIndex = GetBoneIndex(rootBone, Matrix4x4.identity);
+                for (int i = 0, newIndex; i < weights.Length; i++) {
+                    var weight = weights[i];
+                    if (boneMapping.TryGetValue(weight.boneIndex0, out newIndex)) weight.boneIndex0 = newIndex;
+                    else { weight.boneIndex0 = 0; weight.weight0 = 0; }
+                    if (boneMapping.TryGetValue(weight.boneIndex1, out newIndex)) weight.boneIndex1 = newIndex;
+                    else { weight.boneIndex1 = 0; weight.weight1 = 0; }
+                    if (boneMapping.TryGetValue(weight.boneIndex2, out newIndex)) weight.boneIndex2 = newIndex;
+                    else { weight.boneIndex2 = 0; weight.weight2 = 0; }
+                    if (boneMapping.TryGetValue(weight.boneIndex3, out newIndex)) weight.boneIndex3 = newIndex;
+                    else { weight.boneIndex3 = 0; weight.weight3 = 0; }
+                    weights[i] = weight;
+                }
             }
-            var subMeshCount = mesh.subMeshCount;
-            for (int i = 0; i < subMeshCount; i++) {
+            for (int i = 0, subMeshCount = mesh.subMeshCount; i < subMeshCount; i++) {
                 var subMesh = mesh.GetSubMesh(i);
                 if (subMesh.vertexCount <= 0) continue;
                 var sharedMaterial = i < sharedMaterials.Length ? sharedMaterials[i] : null;
                 if (sharedMaterial == null && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
                 GetCombines(sharedMaterial).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = remapTransform }, bakeFlags));
-                boneWeights[(mesh, i)] = weights.Length > 0 ? new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount) :
-                    Enumerable.Repeat(new BoneWeight { boneIndex0 = defaultBoneIndex, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
+                if (!mergeFlags.HasFlag(CombineMeshFlags.BakeMesh))
+                    boneWeights[(mesh, i)] = weights.Length > 0 ? new ArraySegment<BoneWeight>(weights, subMesh.firstVertex, subMesh.vertexCount) :
+                        Enumerable.Repeat(new BoneWeight { boneIndex0 = defaultBoneIndex, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
             }
             if (vertices != null) mesh.GetVertices(vertices);
             if (normals != null) mesh.GetNormals(normals);
@@ -251,7 +262,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 var sharedMaterial = i < sharedMaterials.Length ? sharedMaterials[i] : null;
                 if (sharedMaterial == null && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
                 GetCombines(sharedMaterial).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, new[] { CombineBlendshapeFlags.CombineBlendShape }));
-                boneWeights[(mesh, i)] = Enumerable.Repeat(mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
+                if (!mergeFlags.HasFlag(CombineMeshFlags.BakeMesh))
+                    boneWeights[(mesh, i)] = Enumerable.Repeat(mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
             }
             if (destination != source) {
                 Undo.RecordObject(source, "Combine Meshes");
@@ -285,59 +297,70 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 var mesh = new Mesh();
                 var combineArray = combines.Select(entry => entry.Item1).ToArray();
                 CheckAndCombineMeshes(mesh, combineArray, true);
-                boneWeights[(mesh, 0)] = combineArray.SelectMany(entry => boneWeights[(entry.mesh, entry.subMeshIndex)]).ToArray();
+                boneWeights[(mesh, 0)] = combineArray.SelectMany(entry =>
+                    boneWeights.TryGetValue((entry.mesh, entry.subMeshIndex), out var weights) ?
+                    weights : Enumerable.Empty<BoneWeight>()
+                ).ToArray();
                 if (blendShapeCopyMode != BlendShapeCopyMode.None) CopyBlendShapes(mesh, combines);
                 combines.Clear();
                 combines.Add((new CombineInstance { mesh = mesh, transform = Matrix4x4.identity }, new CombineBlendshapeFlags[mesh.blendShapeCount]));
             }
         }
 
-        public Mesh Combine(SkinnedMeshRenderer destination) {
+        public Mesh Combine(Renderer destination) {
             var bindPoseArray = allBindposes.ToArray();
             var name = destination.name;
             if (!name.EndsWith("mesh", StringComparison.OrdinalIgnoreCase)) name += " Mesh";
             var combinedNewMesh = new Mesh { name = name };
             var combineInstanceArray = materials.SelectMany(material => combineInstances[material]).ToArray();
             CheckAndCombineMeshes(combinedNewMesh, combineInstanceArray.Select(entry => entry.Item1).ToArray(), false);
-            combinedNewMesh.boneWeights = combineInstanceArray.Select(entry => {
-                boneWeights.TryGetValue((entry.Item1.mesh, entry.Item1.subMeshIndex), out var weights);
-                return weights;
-            }).Where(x => x != null).SelectMany(x => x).ToArray();
-            combinedNewMesh.bindposes = bindPoseArray;
-            if (blendShapeCopyMode != BlendShapeCopyMode.None) CopyBlendShapes(combinedNewMesh, combineInstanceArray);
+            if (destination is SkinnedMeshRenderer) {
+                combinedNewMesh.boneWeights = combineInstanceArray.Select(entry => {
+                    boneWeights.TryGetValue((entry.Item1.mesh, entry.Item1.subMeshIndex), out var weights);
+                    return weights;
+                }).Where(x => x != null).SelectMany(x => x).ToArray();
+                combinedNewMesh.bindposes = bindPoseArray;
+                if (blendShapeCopyMode != BlendShapeCopyMode.None) CopyBlendShapes(combinedNewMesh, combineInstanceArray);
+            }
             foreach (var combines in combineInstances.Values) combines.Clear();
             combinedNewMesh.RecalculateBounds();
             combinedNewMesh.UploadMeshData(false);
-            Undo.RecordObject(destination, "Combine Meshes");
-            destination.sharedMesh = combinedNewMesh;
-            var rootBone = destination.rootBone;
-            if (rootBone == null) {
-                if (allBones.Count > 0) {
-                    rootBone = FindCommonParent(allBones);
-                    if (rootBone == null) rootBone = allBones[0];
-                    else foreach (var bone in allBones) {
-                        if (bone == null) continue;
-                        if (bone == rootBone) break;
-                        if (bone.parent == rootBone) {
-                            rootBone = bone;
-                            break;
+            if (destination is SkinnedMeshRenderer skinnedMeshRenderer) {
+                Undo.RecordObject(skinnedMeshRenderer, "Combine Meshes");
+                skinnedMeshRenderer.sharedMesh = combinedNewMesh;
+                var rootBone = skinnedMeshRenderer.rootBone;
+                if (rootBone == null) {
+                    if (allBones.Count > 0) {
+                        rootBone = FindCommonParent(allBones);
+                        if (rootBone == null) rootBone = allBones[0];
+                        else foreach (var bone in allBones) {
+                            if (bone == null) continue;
+                            if (bone == rootBone) break;
+                            if (bone.parent == rootBone) {
+                                rootBone = bone;
+                                break;
+                            }
                         }
                     }
+                    if (rootBone == null) rootBone = skinnedMeshRenderer.transform;
+                    skinnedMeshRenderer.rootBone = rootBone;
                 }
-                if (rootBone == null) rootBone = destination.transform;
-                destination.rootBone = rootBone;
+                var localBounds = bounds;
+                var rootBoneInverse = rootBone.worldToLocalMatrix;
+                localBounds.center = rootBoneInverse.MultiplyPoint(localBounds.center);
+                localBounds.extents = rootBoneInverse.MultiplyVector(localBounds.extents);
+                skinnedMeshRenderer.localBounds = localBounds;
+                skinnedMeshRenderer.bones = allBones.ToArray();
+                foreach (var kv in blendShapesWeights) {
+                    var index = combinedNewMesh.GetBlendShapeIndex(kv.Key);
+                    if (index >= 0) skinnedMeshRenderer.SetBlendShapeWeight(index, kv.Value);
+                }
+            } else if (destination is MeshRenderer && destination.TryGetComponent(out MeshFilter meshFilter)) {
+                Undo.RecordObject(meshFilter, "Combine Meshes");
+                meshFilter.sharedMesh = combinedNewMesh;
+                Undo.RecordObject(destination, "Combine Meshes");
             }
-            var localBounds = bounds;
-            var rootBoneInverse = rootBone.worldToLocalMatrix;
-            localBounds.center = rootBoneInverse.MultiplyPoint(localBounds.center);
-            localBounds.extents = rootBoneInverse.MultiplyVector(localBounds.extents);
-            destination.localBounds = localBounds;
             destination.sharedMaterials = materials.ToArray();
-            destination.bones = allBones.ToArray();
-            foreach (var kv in blendShapesWeights) {
-                var index = combinedNewMesh.GetBlendShapeIndex(kv.Key);
-                if (index >= 0) destination.SetBlendShapeWeight(index, kv.Value);
-            }
             return combinedNewMesh;
         }
 
@@ -416,8 +439,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             Mesh mesh, List<Vector3> vertices, List<Vector3> normals, List<Vector4> tangents,
             int blendShapeIndex, float weight
         ) {
+            const BlendShapeCopyMode COPY_MODE = BlendShapeCopyMode.Vertices | BlendShapeCopyMode.Normals | BlendShapeCopyMode.Tangents;
             var vertexCount = mesh.vertexCount;
-            var vntArray = GetVNTArrays(ref vntArrayCache, vertices.Count, blendShapeCopyMode);
+            var vntArray = GetVNTArrays(ref vntArrayCache, vertices.Count, COPY_MODE);
             var (deltaVertices, deltaNormals, deltaTangents) = vntArray;
             int count = mesh.GetBlendShapeFrameCount(blendShapeIndex);
             if (count == 0) return;
@@ -426,7 +450,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 frameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);
                 if (frameWeight > weight) {
                     mesh.GetBlendShapeFrameVertices(blendShapeIndex, i - 1, deltaVertices, deltaNormals, deltaTangents);
-                    var vntArray2 = GetVNTArrays(ref vntArrayCache2, vertices.Count, blendShapeCopyMode);
+                    var vntArray2 = GetVNTArrays(ref vntArrayCache2, vertices.Count, COPY_MODE);
                     var (deltaVertices2, deltaNormals2, deltaTangents2) = vntArray2;
                     mesh.GetBlendShapeFrameVertices(blendShapeIndex, i, deltaVertices2, deltaNormals2, deltaTangents2);
                     var nextFrameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);

@@ -49,6 +49,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         RemoveMeshPortionsWithoutBones = 4,
         RemoveMeshPortionsWithZeroScaleBones = 8,
         CreateBoneForNonSkinnedMesh = 16,
+        BakeMesh = 32,
     }
 
     public static class Utils {
@@ -84,6 +85,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     copyMode.HasFlag(BlendShapeCopyMode.Vertices) ? new Vector3[vertexCount] : null,
                     copyMode.HasFlag(BlendShapeCopyMode.Normals) ? new Vector3[vertexCount] : null,
                     copyMode.HasFlag(BlendShapeCopyMode.Tangents) ? new Vector3[vertexCount] : null
+                );
+            else if (vntArray.Item1 == null && copyMode.HasFlag(BlendShapeCopyMode.Vertices) ||
+                    vntArray.Item2 == null && copyMode.HasFlag(BlendShapeCopyMode.Normals) ||
+                    vntArray.Item3 == null && copyMode.HasFlag(BlendShapeCopyMode.Tangents))
+                vntArrayCache[vertexCount] = vntArray = (
+                    copyMode.HasFlag(BlendShapeCopyMode.Vertices) ? vntArray.Item1 ?? new Vector3[vertexCount] : vntArray.Item1,
+                    copyMode.HasFlag(BlendShapeCopyMode.Normals) ? vntArray.Item2 ?? new Vector3[vertexCount] : vntArray.Item2,
+                    copyMode.HasFlag(BlendShapeCopyMode.Tangents) ? vntArray.Item3 ?? new Vector3[vertexCount] : vntArray.Item3
                 );
             return vntArray;
         }
