@@ -52,6 +52,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             "If it is an object from a prefab, it will be inactived and set to editor only.\n" +
             "Gray out objects means theres are references pointing to them and/or their children in hierarchy.\n" +
             "You can use Unity's undo function if you accidentally deleted something.";
+        const string MESH_RENDERER_INFO = "The destination is an ordinary mesh renderer, all blend shapes and bones will enforced to combined and dereferenced.";
         static readonly string[] tabNames = new[] { "Combine Meshes", "Combine Bones", "Cleanup" };
         int currentTab;
         Vector2 sourceListScrollPos, boneMergeScrollPos, unusedObjectScrollPos;
@@ -109,6 +110,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     DrawUnusedObjectsTab();
                     break;
             }
+            if (destination is MeshRenderer) EditorGUILayout.HelpBox(MESH_RENDERER_INFO, MessageType.Info);
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginDisabledGroup(sources.Count == 0);
             if (GUILayout.Button("Combine")) Combine();
@@ -137,8 +139,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginChangeCheck();
             var newDestination = EditorGUILayout.ObjectField("Destination", destination, typeof(Renderer), true) as Renderer;
-            if (EditorGUI.EndChangeCheck() &&
-                (newDestination is SkinnedMeshRenderer ||
+            if (EditorGUI.EndChangeCheck() && (
+                newDestination == null ||
+                newDestination is SkinnedMeshRenderer ||
                 (newDestination is MeshRenderer && newDestination.TryGetComponent(out MeshFilter _))))
                 destination = newDestination;
             if (destination == null) {
@@ -155,7 +158,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             }
             EditorGUILayout.EndHorizontal();
+            EditorGUI.BeginDisabledGroup(destination is MeshRenderer);
             blendShapeCopyMode = (BlendShapeCopyMode)EditorGUILayout.EnumFlagsField("Blend Shape Copy Mode", blendShapeCopyMode);
+            EditorGUI.EndDisabledGroup();
             mergeFlags = DrawFlag(mergeFlags, "Merge sub meshes with same material", CombineMeshFlags.MergeSubMeshes);
         }
 
@@ -182,6 +187,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         void DrawCombineBoneTab() {
             EditorGUILayout.HelpBox(COMBINE_BONE_INFO, MessageType.Info);
             boneMergeScrollPos = EditorGUILayout.BeginScrollView(boneMergeScrollPos);
+            bool isMeshRenderer = destination is MeshRenderer;
+            bool isSkinnedMeshRenderer = destination is SkinnedMeshRenderer;
             var drawStack = new Stack<(Transform, int)>();
             foreach (var transform in rootTransforms)
                 drawStack.Push((transform, 0));
@@ -215,8 +222,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                             boneFolded[transform] = folded = true;
                     }
                     EditorGUI.BeginChangeCheck();
-                    isMerge = GUILayout.Toggle(isMerge, EditorGUIUtility.ObjectContent(transform, typeof(Transform)), GUILayout.Height(EditorGUIUtility.singleLineHeight), GUILayout.ExpandWidth(false));
-                    if (EditorGUI.EndChangeCheck()) {
+                    EditorGUI.BeginDisabledGroup(isMeshRenderer);
+                    isMerge = GUILayout.Toggle(isMeshRenderer || isMerge,
+                        EditorGUIUtility.ObjectContent(transform, typeof(Transform)),
+                        GUILayout.Height(EditorGUIUtility.singleLineHeight),
+                        GUILayout.ExpandWidth(false)
+                    );
+                    EditorGUI.EndDisabledGroup();
+                    if (EditorGUI.EndChangeCheck() && isSkinnedMeshRenderer) {
                         if (isMerge)
                             bonesToMergeUpwards.Add(transform);
                         else
@@ -444,6 +457,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
         
         void OnListDrawElement(Rect rect, int index, bool isActive, bool isFocused) {
+            bool isMeshRenderer = destination is MeshRenderer;
             var renderer = sources[index];
             rect.height = EditorGUIUtility.singleLineHeight;
             var rect2 = rect;
@@ -477,24 +491,31 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 bool state = false, isMixed = false, isMixed2 = false;
                 var states2 = CombineBlendshapeFlags.None;
                 for (var i = 0; i < blendShapeFlags.Length; i++) {
-                    bool currentState = blendShapeFlags[i] != CombineBlendshapeFlags.None;
+                    bool currentState = isMeshRenderer || blendShapeFlags[i] != CombineBlendshapeFlags.None;
                     rect2.width = rect.width - 128;
                     EditorGUI.BeginChangeCheck();
-                    currentState = EditorGUI.ToggleLeft(rect2, $"Bake blendshape {blendShapeNameMap[i]}", currentState);
+                    EditorGUI.BeginDisabledGroup(isMeshRenderer);
+                    currentState = EditorGUI.ToggleLeft(rect2, $"Bake blend shape {blendShapeNameMap[i]}", currentState);
+                    EditorGUI.EndDisabledGroup();
                     if (EditorGUI.EndChangeCheck())
                         blendShapeFlags[i] = currentState ? CombineBlendshapeFlags.CombineBlendShape : CombineBlendshapeFlags.None;
                     rect2.x = rect.width - 128;
                     rect2.width = 128;
-                    blendShapeFlags[i] = (CombineBlendshapeFlags)EditorGUI.EnumPopup(rect2, blendShapeFlags[i]);
+                    EditorGUI.BeginChangeCheck();
+                    var flag =  blendShapeFlags[i];
+                    if (isMeshRenderer && flag == CombineBlendshapeFlags.None)
+                        flag = CombineBlendshapeFlags.CombineBlendShape;
+                    flag = (CombineBlendshapeFlags)EditorGUI.EnumPopup(rect2, flag);
+                    if (EditorGUI.EndChangeCheck()) blendShapeFlags[i] = flag;
                     rect2.y += EditorGUIUtility.singleLineHeight;
                     rect2.x = rect.x;
                     if (i == 0) {
                         state = currentState;
-                        states2 = blendShapeFlags[i];
+                        states2 = flag;
                     } else {
                         if (currentState != state)
                             isMixed = true;
-                        if (blendShapeFlags[i] != states2)
+                        if (flag != states2)
                             isMixed2 = true;
                     }
                 }
@@ -511,16 +532,22 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 rect2.x = rect.xMax - 16;
                 rect2.width = 16;
                 EditorGUI.BeginChangeCheck();
+                EditorGUI.BeginDisabledGroup(isMeshRenderer);
                 EditorGUI.showMixedValue = isMixed;
                 state = EditorGUI.Toggle(rect2, state);
                 EditorGUI.showMixedValue = false;
+                EditorGUI.EndDisabledGroup();
                 if (EditorGUI.EndChangeCheck())
                     for (var i = 0; i < blendShapeFlags.Length; i++)
                         blendShapeFlags[i] = state ? CombineBlendshapeFlags.CombineBlendShape : CombineBlendshapeFlags.None;
             } else if (renderer is MeshRenderer) {
                 var newFlags = combineMeshFlags;
+                EditorGUI.BeginChangeCheck();
+                EditorGUI.BeginDisabledGroup(isMeshRenderer);
+                if (isMeshRenderer) newFlags &= ~CombineMeshFlags.CreateBoneForNonSkinnedMesh;
                 newFlags = DrawFlag(newFlags, rect2, "Create bone for this mesh renderer", CombineMeshFlags.CreateBoneForNonSkinnedMesh);
-                if (newFlags != combineMeshFlags) bakeBlendShapeMap[renderer] = (blendShapeFlags, newFlags, toggleState, blendShapeNameMap);
+                EditorGUI.EndDisabledGroup();
+                if (EditorGUI.EndChangeCheck()) bakeBlendShapeMap[renderer] = (blendShapeFlags, newFlags, toggleState, blendShapeNameMap);
             }
         }
 
