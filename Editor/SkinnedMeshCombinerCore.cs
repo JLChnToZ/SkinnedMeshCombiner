@@ -31,9 +31,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     using static Utils;
 
     public class SkinnedMeshCombinerCore {
-        readonly Dictionary<Material, List<(CombineInstance, CombineBlendshapeFlags[])>> combineInstances = new Dictionary<Material, List<(CombineInstance, CombineBlendshapeFlags[])>>();
-        readonly Dictionary<(Mesh, int), IEnumerable<BoneWeight>> boneWeights = new Dictionary<(Mesh, int), IEnumerable<BoneWeight>>();
-        readonly Dictionary<(Transform, Matrix4x4), int> bindposeMap = new Dictionary<(Transform, Matrix4x4), int>();
+        readonly Dictionary<Material, List<(CombineInstance combineInstance, CombineBlendshapeFlags[] flags)>> combineInstances =
+            new Dictionary<Material, List<(CombineInstance, CombineBlendshapeFlags[])>>();
+        readonly Dictionary<(Mesh mesh, int index), IEnumerable<BoneWeight>> boneWeights = new Dictionary<(Mesh, int), IEnumerable<BoneWeight>>();
+        readonly Dictionary<(Transform bone, Matrix4x4 poseMatrix), int> bindposeMap = new Dictionary<(Transform, Matrix4x4), int>();
         readonly Dictionary<Transform, List<Matrix4x4>> bindposeMap2 = new Dictionary<Transform, List<Matrix4x4>>();
         readonly List<Matrix4x4> bindposes = new List<Matrix4x4>();
         readonly List<Matrix4x4> allBindposes = new List<Matrix4x4>();
@@ -41,7 +42,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         readonly HashSet<int> boneHasWeights = new HashSet<int>();
         readonly Dictionary<int, int> boneMapping = new Dictionary<int, int>();
         readonly List<Material> materials = new List<Material>();
-        Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache = null, vntArrayCache2 = null;
+        Dictionary<int, (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents)> vntArrayCache = null, vntArrayCache2 = null;
         readonly BlendShapeCopyMode blendShapeCopyMode;
         readonly List<Vector3> vertices, normals;
         readonly List<Vector4> tangents;
@@ -130,8 +131,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         source.GetBlendShapeWeight(i) <= 0)
                         continue;
                     for (int j = 0, framecount = mesh.GetBlendShapeFrameCount(i); j < framecount; j++) {
-                        var vntArray = GetVNTArrays(ref vntArrayCache, mesh.vertexCount, BlendShapeCopyMode.Vertices);
-                        var (deltaVertices, _, _) = vntArray;
+                        var (deltaVertices, _, _) = GetVNTArrays(ref vntArrayCache, mesh.vertexCount, BlendShapeCopyMode.Vertices);
                         mesh.GetBlendShapeFrameVertices(i, j, deltaVertices, null, null);
                         for (int k = 0; k < deltaVertices.Length; k++)
                             if (deltaVertices[k] != Vector3.zero)
@@ -152,23 +152,19 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     }
                     for (int i = 0; i < weights.Length; i++) {
                         var weight = weights[i];
-                        bool shouldRemove = true;
-                        if (weight.weight0 > 0) {
-                            if (!boneIndexToRemove.ContainsKey(weight.boneIndex0)) shouldRemove = false;
-                        } else if (weight.weight1 > 0) {
-                            if (!boneIndexToRemove.ContainsKey(weight.boneIndex1)) shouldRemove = false;
-                        } else if (weight.weight2 > 0) {
-                            if (!boneIndexToRemove.ContainsKey(weight.boneIndex2)) shouldRemove = false;
-                        } else if (weight.weight3 > 0) {
-                            if (!boneIndexToRemove.ContainsKey(weight.boneIndex3)) shouldRemove = false;
-                        } else continue;
-                        if (shouldRemove)
-                            vertexCutter.RemoveVertex(i,
-                                (weight.weight0 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex0, out bool flag) && flag) ||
-                                (weight.weight1 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex1, out flag) && flag) ||
-                                (weight.weight2 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex2, out flag) && flag) ||
-                                (weight.weight3 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex3, out flag) && flag)
-                            );
+                        bool flag0 = false, flag1 = false, flag2 = false, flag3 = false;
+                        var hasFlag0 = weight.weight0 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex0, out flag0);
+                        var hasFlag1 = weight.weight1 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex1, out flag1);
+                        var hasFlag2 = weight.weight2 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex2, out flag2);
+                        var hasFlag3 = weight.weight3 > 0 && boneIndexToRemove.TryGetValue(weight.boneIndex3, out flag3);
+                        // The vertex will be removed if any of the following conditions are met:
+                        // 1. Any weights mapped to a bone that is removed
+                        // 2. All weights mapped to a bone without scale
+                        // 3. No weights mapped to a bone
+                        if ((hasFlag0 && flag0) || (hasFlag1 && flag1) || (hasFlag2 && flag2) || (hasFlag3 && flag3) ||
+                            ((!hasFlag0 || !flag0) && (!hasFlag1 || !flag1) && (!hasFlag2 || !flag2) && (!hasFlag3 || !flag3)) ||
+                            (weight.weight0 <= 0 && weight.weight1 <= 0 && weight.weight2 <= 0 && weight.weight3 <= 0))
+                            vertexCutter.RemoveVertex(i, flag0 || flag1 || flag2 || flag3);
                     }
                 }
                 mesh = vertexCutter.Apply(mesh);
@@ -295,7 +291,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 var combines = kv.Value;
                 if (combines.Count < 2) continue;
                 var mesh = new Mesh();
-                var combineArray = combines.Select(entry => entry.Item1).ToArray();
+                var combineArray = combines.Select(entry => entry.combineInstance).ToArray();
                 CheckAndCombineMeshes(mesh, combineArray, true);
                 boneWeights[(mesh, 0)] = combineArray.SelectMany(entry =>
                     boneWeights.TryGetValue((entry.mesh, entry.subMeshIndex), out var weights) ?
@@ -313,10 +309,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             if (!name.EndsWith("mesh", StringComparison.OrdinalIgnoreCase)) name += " Mesh";
             var combinedNewMesh = new Mesh { name = name };
             var combineInstanceArray = materials.SelectMany(material => combineInstances[material]).ToArray();
-            CheckAndCombineMeshes(combinedNewMesh, combineInstanceArray.Select(entry => entry.Item1).ToArray(), false);
+            CheckAndCombineMeshes(combinedNewMesh, combineInstanceArray.Select(entry => entry.combineInstance).ToArray(), false);
             if (destination is SkinnedMeshRenderer) {
                 combinedNewMesh.boneWeights = combineInstanceArray.Select(entry => {
-                    boneWeights.TryGetValue((entry.Item1.mesh, entry.Item1.subMeshIndex), out var weights);
+                    boneWeights.TryGetValue((entry.combineInstance.mesh, entry.combineInstance.subMeshIndex), out var weights);
                     return weights;
                 }).Where(x => x != null).SelectMany(x => x).ToArray();
                 combinedNewMesh.bindposes = bindPoseArray;
@@ -400,6 +396,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public void CopyBlendShapes(Mesh combinedNewMesh, IEnumerable<(CombineInstance, CombineBlendshapeFlags[])> combineInstances) {
             if (!LazyInitialize(ref blendShapesStore)) blendShapesStore.Clear();
             int offset = 0;
+            var supportedCopyMode = BlendShapeCopyMode.None;
             foreach (var (entry, bakeFlags) in combineInstances) {
                 var mesh = entry.mesh;
                 var subMeshIndex = entry.subMeshIndex;
@@ -409,10 +406,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     string key = mesh.GetBlendShapeName(k);
                     LazyInitialize(blendShapesStore, key, out var timeline);
                     timeline.AddFrom(mesh, subMeshIndex, k, offset, entry.transform);
+                    supportedCopyMode |= GetSupportedBlendShapeCopyMode(mesh);
                 }
                 offset += subMesh.vertexCount;
             }
-            foreach (var timeline in blendShapesStore) timeline.Value.ApplyTo(combinedNewMesh, timeline.Key, blendShapeCopyMode, ref vntArrayCache, ref vntArrayCache2);
+            foreach (var timeline in blendShapesStore) timeline.Value.ApplyTo(combinedNewMesh, timeline.Key, blendShapeCopyMode & supportedCopyMode, ref vntArrayCache, ref vntArrayCache2);
         }
 
         static void ApplyBlendShape(List<Vector3> source, Vector3[] blendShapeDataPrev, Vector3[] blendShapeDataNext, float lerp, int offset, int count) {
@@ -439,10 +437,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             Mesh mesh, List<Vector3> vertices, List<Vector3> normals, List<Vector4> tangents,
             int blendShapeIndex, float weight
         ) {
-            const BlendShapeCopyMode COPY_MODE = BlendShapeCopyMode.Vertices | BlendShapeCopyMode.Normals | BlendShapeCopyMode.Tangents;
+            var copyMode = GetSupportedBlendShapeCopyMode(mesh);
             var vertexCount = mesh.vertexCount;
-            var vntArray = GetVNTArrays(ref vntArrayCache, vertices.Count, COPY_MODE);
-            var (deltaVertices, deltaNormals, deltaTangents) = vntArray;
+            var (deltaVertices, deltaNormals, deltaTangents) = GetVNTArrays(ref vntArrayCache, vertices.Count, copyMode);
             int count = mesh.GetBlendShapeFrameCount(blendShapeIndex);
             if (count == 0) return;
             float frameWeight;
@@ -450,8 +447,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 frameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);
                 if (frameWeight > weight) {
                     mesh.GetBlendShapeFrameVertices(blendShapeIndex, i - 1, deltaVertices, deltaNormals, deltaTangents);
-                    var vntArray2 = GetVNTArrays(ref vntArrayCache2, vertices.Count, COPY_MODE);
-                    var (deltaVertices2, deltaNormals2, deltaTangents2) = vntArray2;
+                    var (deltaVertices2, deltaNormals2, deltaTangents2) = GetVNTArrays(ref vntArrayCache2, vertices.Count, copyMode);
                     mesh.GetBlendShapeFrameVertices(blendShapeIndex, i, deltaVertices2, deltaNormals2, deltaTangents2);
                     var nextFrameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, i);
                     var lerp = Mathf.InverseLerp(frameWeight, nextFrameWeight, weight);
@@ -479,6 +475,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             if (LazyInitialize(combineInstances, materialToIndex, out var combines))
                 materials.Add(material);
             return combines;
+        }
+
+        static BlendShapeCopyMode GetSupportedBlendShapeCopyMode(Mesh mesh) {
+            var copyMode = BlendShapeCopyMode.None;
+            if (mesh.HasVertexAttribute(VertexAttribute.Position)) copyMode |= BlendShapeCopyMode.Vertices;
+            if (mesh.HasVertexAttribute(VertexAttribute.Normal)) copyMode |= BlendShapeCopyMode.Normals;
+            if (mesh.HasVertexAttribute(VertexAttribute.Tangent)) copyMode |= BlendShapeCopyMode.Tangents;
+            return copyMode;
         }
     }
 }

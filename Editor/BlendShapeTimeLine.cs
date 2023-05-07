@@ -28,8 +28,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     using static Utils;
 
     class BlendShapeTimeLine {
-        readonly Dictionary<float, Dictionary<(Mesh, int), int>> frames = new Dictionary<float, Dictionary<(Mesh, int), int>>();
-        readonly Dictionary<(Mesh, int), (SubMeshDescriptor, int, int, Matrix4x4?)> subMeshes = new Dictionary<(Mesh, int), (SubMeshDescriptor, int, int, Matrix4x4?)>();
+        readonly Dictionary<float, Dictionary<(Mesh mesh, int subMeshIndex), int>> frames = new Dictionary<float, Dictionary<(Mesh, int), int>>();
+        readonly Dictionary<(Mesh mesh, int subMeshIndex), (SubMeshDescriptor subMesh, int blendShapeIndex, int destOffset, Matrix4x4? transform)> subMeshes =
+            new Dictionary<(Mesh, int), (SubMeshDescriptor, int, int, Matrix4x4?)>();
 
         public void AddFrom(Mesh mesh, int subMeshIndex, int blendShapeIndex, int destOffset, Matrix4x4? transform = null) {
             var subMeshKey = (mesh, subMeshIndex);
@@ -47,8 +48,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public void ApplyTo(
             Mesh combinedMesh, string blendShapeName,
             BlendShapeCopyMode copyMode,
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache2
+            ref Dictionary<int, (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents)> vntArrayCache,
+            ref Dictionary<int, (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents)> vntArrayCache2
         ) {
             int destBlendShapeIndex = combinedMesh.GetBlendShapeIndex(blendShapeName);
             if (destBlendShapeIndex >= 0) {
@@ -56,7 +57,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 return;
             }
             var destVertexCount = combinedMesh.vertexCount;
-            var remainingMeshes = new HashSet<(Mesh, int)>();
+            var remainingMeshes = new HashSet<(Mesh mesh, int subMeshIndex)>();
             var weights = new float[frames.Count];
             frames.Keys.CopyTo(weights, 0);
             Array.Sort(weights);
@@ -112,10 +113,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         bool SeekBlendShapeFrameData(
-            (Mesh, int) key, (SubMeshDescriptor, int, int, Matrix4x4?) subMeshData,
+            (Mesh mesh, int subMeshIndex) key,
+            (SubMeshDescriptor subMesh, int blendShapeIndex, int destOffset, Matrix4x4? transform) subMeshData,
             float[] weights, int weightIndex, bool seekAscending, BlendShapeCopyMode copyMode,
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
-            out (Vector3[], Vector3[], Vector3[], float) result
+            ref Dictionary<int, (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents)> vntArrayCache,
+            out (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents, float weight) result
         ) {
             while (true) {
                 if (seekAscending ? ++weightIndex >= weights.Length : --weightIndex < 0) {

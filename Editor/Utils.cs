@@ -75,8 +75,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             if (list.Capacity < capacity) list.Capacity = capacity;
         }
         
-        public static (Vector3[], Vector3[], Vector3[]) GetVNTArrays(
-            ref Dictionary<int, (Vector3[], Vector3[], Vector3[])> vntArrayCache,
+        public static (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents) GetVNTArrays(
+            ref Dictionary<int, (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents)> vntArrayCache,
             int vertexCount, BlendShapeCopyMode copyMode
         ) {
             LazyInitialize(ref vntArrayCache);
@@ -86,13 +86,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     copyMode.HasFlag(BlendShapeCopyMode.Normals) ? new Vector3[vertexCount] : null,
                     copyMode.HasFlag(BlendShapeCopyMode.Tangents) ? new Vector3[vertexCount] : null
                 );
-            else if (vntArray.Item1 == null && copyMode.HasFlag(BlendShapeCopyMode.Vertices) ||
-                    vntArray.Item2 == null && copyMode.HasFlag(BlendShapeCopyMode.Normals) ||
-                    vntArray.Item3 == null && copyMode.HasFlag(BlendShapeCopyMode.Tangents))
+            else if (vntArray.deltaVertices == null && copyMode.HasFlag(BlendShapeCopyMode.Vertices) ||
+                    vntArray.deltaNormals == null && copyMode.HasFlag(BlendShapeCopyMode.Normals) ||
+                    vntArray.deltaTangents == null && copyMode.HasFlag(BlendShapeCopyMode.Tangents))
                 vntArrayCache[vertexCount] = vntArray = (
-                    copyMode.HasFlag(BlendShapeCopyMode.Vertices) ? vntArray.Item1 ?? new Vector3[vertexCount] : vntArray.Item1,
-                    copyMode.HasFlag(BlendShapeCopyMode.Normals) ? vntArray.Item2 ?? new Vector3[vertexCount] : vntArray.Item2,
-                    copyMode.HasFlag(BlendShapeCopyMode.Tangents) ? vntArray.Item3 ?? new Vector3[vertexCount] : vntArray.Item3
+                    copyMode.HasFlag(BlendShapeCopyMode.Vertices) ? vntArray.deltaVertices ?? new Vector3[vertexCount] : vntArray.deltaVertices,
+                    copyMode.HasFlag(BlendShapeCopyMode.Normals) ? vntArray.deltaNormals ?? new Vector3[vertexCount] : vntArray.deltaNormals,
+                    copyMode.HasFlag(BlendShapeCopyMode.Tangents) ? vntArray.deltaTangents ?? new Vector3[vertexCount] : vntArray.deltaTangents
                 );
             return vntArray;
         }
@@ -106,7 +106,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         public static void CopyVNTArrays(
-            (Vector3[], Vector3[], Vector3[], float) frameData, (SubMeshDescriptor, int, int, Matrix4x4?) subMeshData, 
+            (Vector3[] deltaVertices, Vector3[] deltaNormals, Vector3[] deltaTangents, float weight) frameData,
+            (SubMeshDescriptor subMesh, int blendShapeIndex, int destOffset, Matrix4x4? transform) subMeshData, 
             Vector3[] destDeltaVertices, Vector3[] destDeltaNormals, Vector3[] destDeltaTangents
         ) {
             var (deltaVertices, deltaNormals, deltaTangents, _) = frameData;
