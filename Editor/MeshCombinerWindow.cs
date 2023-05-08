@@ -54,6 +54,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             "You can use Unity's undo function if you accidentally deleted something.";
         const string MESH_RENDERER_INFO = "The destination is an ordinary mesh renderer, all blend shapes and bones will enforced to combined and dereferenced.";
         static readonly string[] tabNames = new[] { "Combine Meshes", "Combine Bones", "Cleanup" };
+        static GUIContent dropdownIcon;
         int currentTab;
         Vector2 sourceListScrollPos, boneMergeScrollPos, unusedObjectScrollPos;
         List<Renderer> sources = new List<Renderer>();
@@ -145,16 +146,24 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 (newDestination is MeshRenderer && newDestination.TryGetComponent(out MeshFilter _))))
                 destination = newDestination;
             if (destination == null) {
-                EditorGUI.BeginDisabledGroup(true);
-                GUILayout.Label("Auto Create", EditorStyles.miniButtonLeft, GUILayout.ExpandWidth(false));
-                EditorGUI.EndDisabledGroup();
-                if (GUILayout.Button("Skinned", EditorStyles.miniButtonMid, GUILayout.ExpandWidth(false))) {
+                if (GUILayout.Button("Auto Create", EditorStyles.miniButtonLeft, GUILayout.ExpandWidth(false))) {
                     destination = AutoCreateRenderer<SkinnedMeshRenderer>();
                     EditorGUIUtility.PingObject(destination);
                 }
-                if (GUILayout.Button("Mesh Renderer", EditorStyles.miniButtonRight, GUILayout.ExpandWidth(false))) {
-                    destination = AutoCreateRenderer<MeshRenderer>();
-                    EditorGUIUtility.PingObject(destination);
+                if (dropdownIcon == null) dropdownIcon = EditorGUIUtility.IconContent("d_icon dropdown");
+                var dropdownButtonSize = EditorStyles.miniButtonRight.CalcSize(dropdownIcon);
+                var dropdownButtonRect = GUILayoutUtility.GetRect(dropdownButtonSize.x, dropdownButtonSize.y, EditorStyles.miniButtonRight, GUILayout.ExpandWidth(false));
+                if (GUI.Button(dropdownButtonRect, dropdownIcon, EditorStyles.miniButtonRight)) {
+                    var menu = new GenericMenu();
+                    menu.AddItem(new GUIContent("Skinned Mesh Renderer"), false, () => {
+                        destination = AutoCreateRenderer<SkinnedMeshRenderer>();
+                        EditorGUIUtility.PingObject(destination);
+                    });
+                    menu.AddItem(new GUIContent("Mesh Renderer"), false, () => {
+                        destination = AutoCreateRenderer<MeshRenderer>();
+                        EditorGUIUtility.PingObject(destination);
+                    });
+                    menu.DropDown(dropdownButtonRect);
                 }
             }
             EditorGUILayout.EndHorizontal();
@@ -329,16 +338,16 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             EditorGUILayout.EndHorizontal();
         }
 
-        Renderer AutoCreateRenderer<T>() where T : Renderer {
+        T AutoCreateRenderer<T>() where T : Renderer {
             var commonParent = FindCommonParent(sources.Select(x => x.transform));
             var type = typeof(T);
             var newChild = type.Name == "MeshRenderer" ?
-                new GameObject("Combined Mesh", type, typeof(MeshFilter)) :
+                new GameObject("Combined Mesh", typeof(MeshFilter), type) :
                 new GameObject("Combined Mesh", type);
             if (commonParent != null) newChild.transform.SetParent(commonParent, false);
             GameObjectUtility.EnsureUniqueNameForSibling(newChild);
             Undo.RegisterCreatedObjectUndo(newChild, $"Auto Create {type.Name}");
-            return newChild.GetComponent<Renderer>();
+            return newChild.GetComponent<T>();
         }
 
         void UpdateSafeDeleteObjects() {
