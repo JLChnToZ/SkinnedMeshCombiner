@@ -347,9 +347,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
 
             public override void Apply(Mesh mesh) {
-                Array.Resize(ref deltaVertices, deltaVertices.Length - offset);
-                Array.Resize(ref deltaNormals, deltaNormals.Length - offset);
-                Array.Resize(ref deltaTangents, deltaTangents.Length - offset);
+                if (deltaVertices != null) Array.Resize(ref deltaVertices, deltaVertices.Length - offset);
+                if (deltaNormals != null) Array.Resize(ref deltaNormals, deltaNormals.Length - offset);
+                if (deltaTangents != null) Array.Resize(ref deltaTangents, deltaTangents.Length - offset);
                 mesh.AddBlendShapeFrame(name, weight, deltaVertices, deltaNormals, deltaTangents);
             }
         }
