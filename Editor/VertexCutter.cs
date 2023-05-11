@@ -25,20 +25,21 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Unity.Collections;
 
-namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
+namespace JLChnToZ {
     /// <summary>Helper class that safely cuts (removes) vertices from a mesh.</summary>
     public class VertexCutter : IDisposable {
         readonly HashSet<int> removedVerticeIndecies = new HashSet<int>();
         readonly HashSet<int> aggressiveRemovedVerticeIndecies = new HashSet<int>();
         StreamCutter[] streamCutters;
-        readonly int[] vertexReferenceCounts;
-        readonly int vertexCount;
         readonly TriangleCutter triangleCutter;
+        readonly int vertexCount;
+        readonly bool supportsSkipToFirstVertex;
         bool isFlushed;
+        int firstVertex = int.MaxValue;
 
         /// <summary><c>true</c> to skip empty sub-meshes.</summary>
         /// <remarks>
-        /// When this is <c>true</c>, <see cref="SkippedSubMeshes"/> will be set after <see cref="Apply"/>.
+        /// When this is <c>true</c>, <see cref="SkippedSubMeshes"/> will be set after flushed.
         /// You can use <see cref="SkippedSubMeshes"/> to determine which sub-meshes are skipped.
         /// </remarks>
         public bool SkipEmptySubMeshes {
@@ -51,7 +52,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
 
         /// <summary>
         /// Gets an array of booleans indicating whether a sub-mesh is skipped after removing vertices.
-        /// <c>null</c> if <see cref="SkipEmptySubMeshes"/> is <c>false</c> or not yet applied.
+        /// <c>null</c> if <see cref="SkipEmptySubMeshes"/> is <c>false</c> or not yet flushed.
         /// </summary>
         public bool[] SkippedSubMeshes => triangleCutter.skippedSubMeshes;
 
@@ -63,16 +64,19 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public VertexCutter(Mesh mesh) {
             if (mesh == null) throw new ArgumentNullException(nameof(mesh));
             vertexCount = mesh.vertexCount;
+            supportsSkipToFirstVertex = true;
             var streamCutterList = new List<StreamCutter>();
             foreach (var attribute in Enum.GetValues(typeof(VertexAttribute)) as VertexAttribute[]) {
                 var streamCutter = StreamCutter.Get(mesh, attribute);
-                if (streamCutter != null) streamCutterList.Add(streamCutter);
+                if (streamCutter == null) continue;
+                streamCutterList.Add(streamCutter);
+                if (!streamCutter.SupportsSkipToFirstVertex)
+                    supportsSkipToFirstVertex = false;
             }
             for (int i = 0, count = mesh.blendShapeCount; i < count; i++)
                 for (int j = 0, frameCount = mesh.GetBlendShapeFrameCount(i); j < frameCount; j++)
                     streamCutterList.Add(new BlendShapeCutter(mesh, i, j));
             triangleCutter = new TriangleCutter(mesh, removedVerticeIndecies, aggressiveRemovedVerticeIndecies);
-            vertexReferenceCounts = triangleCutter.vertexReferenceCounts;
             streamCutterList.Add(triangleCutter);
             streamCutters = streamCutterList.ToArray();
         }
@@ -92,6 +96,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 aggressiveRemovedVerticeIndecies.Add(index);
             else
                 removedVerticeIndecies.Add(index);
+            if (index < firstVertex) firstVertex = index;
         }
 
         /// <summary>Flush all pending changes.</summary>
@@ -100,11 +105,17 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public void Flush() {
             if (streamCutters == null) throw new ObjectDisposedException(nameof(VertexCutter));
             if (isFlushed) return;
-            foreach (var cutter in streamCutters) cutter.BeforeFlush();
-            for (int i = 0; i < vertexCount; i++) {
-                bool skip = vertexReferenceCounts[i] == 0;
+            triangleCutter.BeforeFlush();
+            int firstVertex = 0;
+            if (supportsSkipToFirstVertex) {
+                foreach (var cutter in streamCutters) cutter.Skip(firstVertex);
+                firstVertex = this.firstVertex;
+            }
+            for (int i = firstVertex; i < vertexCount; i++) {
+                bool skip = triangleCutter.vertexReferenceCounts[i] == 0;
                 foreach (var cutter in streamCutters) cutter.Next(skip);
             }
+            triangleCutter.AfterFlush();
             removedVerticeIndecies.Clear();
             aggressiveRemovedVerticeIndecies.Clear();
             isFlushed = true;
@@ -135,7 +146,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         /// <exception cref="ArgumentNullException">Thrown when <paramref name="materials"/> is null.</exception>
         /// <exception cref="ObjectDisposedException">Thrown when this cutter is disposed.</exception>
         /// <exception cref="ArgumentException">Thrown when material count mismatch.</exception>
-        /// <remarks>No effects if <see cref="SkipEmptySubMeshes"/> is <c>false</c> or not yet applied.</remarks>
+        /// <remarks>No effects if <see cref="SkipEmptySubMeshes"/> is <c>false</c> or not yet flushed.</remarks>
         public Material[] ApplyMaterialChanges(Material[] materials) {
             if (materials == null) throw new ArgumentNullException(nameof(materials));
             if (streamCutters == null) throw new ObjectDisposedException(nameof(VertexCutter));
@@ -166,9 +177,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         /// <returns>A new mesh with vertices removed.</returns>
         /// <remarks>All submeshes will be kept regardless of empty or not.</remarks>
         public static Mesh CutVertices(Mesh source, IEnumerable<int> indexes) {
-            using var cutter = new VertexCutter(source);
-            foreach (var index in indexes) cutter.RemoveVertex(index, true);
-            return cutter.Apply();
+            using (var cutter = new VertexCutter(source)) {
+                foreach (var index in indexes) cutter.RemoveVertex(index, true);
+                return cutter.Apply();
+            }
         }
 
         /// <summary>Remove vertices from a mesh.</summary>
@@ -178,15 +190,18 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         /// <returns>A new mesh with vertices removed.</returns>
         /// <remarks>If theres any submeshes become empty after removing vertices, they will be removed.</remarks>
         public static Mesh CutVertices(Mesh source, ref Material[] materials, IEnumerable<int> indexes) {
-            using var cutter = new VertexCutter(source) { SkipEmptySubMeshes = true };
-            foreach (var index in indexes) cutter.RemoveVertex(index, true);
-            var newMesh = cutter.Apply();
-            materials = cutter.ApplyMaterialChanges(materials);
-            return newMesh;
+            using (var cutter = new VertexCutter(source) { SkipEmptySubMeshes = true }) {
+                foreach (var index in indexes) cutter.RemoveVertex(index, true);
+                var newMesh = cutter.Apply();
+                materials = cutter.ApplyMaterialChanges(materials);
+                return newMesh;
+            }
         }
 
         abstract class StreamCutter : IDisposable {
             protected int index, offset;
+
+            public virtual bool SupportsSkipToFirstVertex => true;
 
             public static StreamCutter Get(Mesh mesh, VertexAttribute attribute) {
                 if (!mesh.HasVertexAttribute(attribute)) return null;
@@ -227,7 +242,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             
             protected StreamCutter() { }
 
-            public virtual void BeforeFlush() {}
+            public virtual void Skip(int index) {
+                this.index += index;
+            }
 
             public virtual void Next(bool skip) {
                 if (skip) offset++;
@@ -427,6 +444,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             NativeArray<byte> bonesPerVertex;
             int boneWeightIndex, boneWeightOffset;
 
+            public override bool SupportsSkipToFirstVertex => false;
+
             public BoneCutter(Mesh mesh) {
                 var readonlyBoneWeights = mesh.GetAllBoneWeights();
                 boneWeights = new NativeArray<BoneWeight1>(readonlyBoneWeights.Length, Allocator.Temp);
@@ -444,6 +463,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 index++;
                 boneWeightIndex += bonePerVertex;
             }
+
+            public override void Skip(int index) => throw new NotSupportedException();
 
             protected override void Move() {
                 bonesPerVertex[index - offset] = bonesPerVertex[index];
@@ -470,6 +491,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             readonly Vector3Int[][] streams;
             readonly int[] vertexMapping;
             int triangleIndexCount;
+            int subMeshCount;
             readonly HashSet<int> removedVerticeIndecies, aggressiveRemovedVerticeIndecies;
             public bool skipEmptySubMeshes;
             public bool[] skippedSubMeshes;
@@ -478,14 +500,15 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 this.mesh = mesh;
                 this.removedVerticeIndecies = removedVerticeIndecies;
                 this.aggressiveRemovedVerticeIndecies = aggressiveRemovedVerticeIndecies;
-                streams = new Vector3Int[mesh.subMeshCount][];
+                subMeshCount = mesh.subMeshCount;
+                streams = new Vector3Int[subMeshCount][];
                 vertexReferenceCounts = new int[mesh.vertexCount];
                 vertexMapping = new int[mesh.vertexCount];
                 triangles = new List<int>();
                 triangleIndexCount = 0;
             }
 
-            public override void BeforeFlush() {
+            public void BeforeFlush() {
                 for (int i = 0; i < streams.Length; i++) {
                     mesh.GetTriangles(triangles, i);
                     var triangleStream = new Vector3Int[triangles.Count / 3];
@@ -512,15 +535,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
 
             public override void Next(bool skip) {
-                vertexMapping[index] = index - offset;
+                vertexMapping[index] = index - offset + 1;
                 base.Next(skip);
             }
 
             protected override void Move() {}
 
-            public override void Apply(Mesh mesh) {
-                mesh.triangles = new int[triangleIndexCount];
-                int subMeshCount = streams.Length;
+            public void AfterFlush() {
                 if (skipEmptySubMeshes) {
                     skippedSubMeshes = new bool[subMeshCount];
                     for (int i = 0; i < streams.Length; i++) {
@@ -535,6 +556,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     }
                 } else
                     skippedSubMeshes = null;
+            }
+
+            public override void Apply(Mesh mesh) {
+                mesh.triangles = new int[triangleIndexCount];
                 mesh.subMeshCount = subMeshCount;
                 for (int i = 0, subMeshIndexOffset = 0, offset = 0; i < streams.Length; i++) {
                     if (skipEmptySubMeshes && skippedSubMeshes[i]) {
@@ -545,15 +570,21 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     triangles.Clear();
                     foreach (var entry in triangleStream) {
                         if (entry.x < 0) continue;
-                        triangles.Add(vertexMapping[entry.x]);
-                        triangles.Add(vertexMapping[entry.y]);
-                        triangles.Add(vertexMapping[entry.z]);
+                        AppendVertex(entry, 0);
+                        AppendVertex(entry, 1);
+                        AppendVertex(entry, 2);
                     }
                     int count = triangles.Count;
                     mesh.SetSubMesh(i - subMeshIndexOffset, new SubMeshDescriptor(offset, count));
                     mesh.SetTriangles(triangles, i - subMeshIndexOffset);
                     offset += count;
                 }
+            }
+
+            void AppendVertex(Vector3Int triangle, int i) {
+                int srcIndex = triangle[i];
+                int destIndex = vertexMapping[srcIndex] - 1;
+                triangles.Add(destIndex < 0 ? srcIndex : destIndex);
             }
         }
 
@@ -563,6 +594,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             public BindposeCutter(Mesh mesh) {
                 bindposes = mesh.bindposes;
             }
+
+            public override void Skip(int index) {} // Nothing to do with bindposes
 
             public override void Next(bool skip) {} // Nothing to do with bindposes
 

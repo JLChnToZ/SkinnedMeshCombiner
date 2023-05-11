@@ -162,7 +162,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         // 2. All weights mapped to a bone without scale
                         // 3. No weights mapped to a bone
                         if ((hasFlag0 && flag0) || (hasFlag1 && flag1) || (hasFlag2 && flag2) || (hasFlag3 && flag3) ||
-                            ((!hasFlag0 || !flag0) && (!hasFlag1 || !flag1) && (!hasFlag2 || !flag2) && (!hasFlag3 || !flag3)) ||
+                            ((hasFlag0 || hasFlag1 || hasFlag2 || hasFlag3) && (!hasFlag0 || !flag0) && (!hasFlag1 || !flag1) && (!hasFlag2 || !flag2) && (!hasFlag3 || !flag3)) ||
                             (weight.weight0 <= 0 && weight.weight1 <= 0 && weight.weight2 <= 0 && weight.weight3 <= 0))
                             vertexCutter.RemoveVertex(i, flag0 || flag1 || flag2 || flag3);
                     }
