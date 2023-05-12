@@ -130,6 +130,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             EditorGUILayout.EndHorizontal();
             EditorGUILayout.HelpBox(COMBINE_INFO, MessageType.Info);
+            HandleDrop();
         }
 
         void DrawCombineMeshTab() {
@@ -337,6 +338,46 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             EditorGUI.EndDisabledGroup();
             EditorGUILayout.EndHorizontal();
         }
+
+        void HandleDrop() {
+            var ev = Event.current;
+            switch (ev.type) {
+                case EventType.DragUpdated:
+                    if (DragAndDrop.objectReferences.SelectMany(GetRenderers).Any(IsAcceptableObject)) {
+                        DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+                        ev.Use();
+                    }
+                    break;
+                case EventType.DragPerform:
+                    var objectRefs = DragAndDrop.objectReferences.SelectMany(GetRenderers).ToArray();
+                    if (objectRefs.Any(IsAcceptableObject)) {
+                        DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+                        DragAndDrop.AcceptDrag();
+                        sources.AddRange(objectRefs.Where(IsAcceptableObject));
+                        if (currentTab != 0) currentTab = 0;
+                        RefreshCombineMeshOptions();
+                        ev.Use();
+                    }
+                    break;
+            }
+        }
+
+        static IEnumerable<Renderer> GetRenderers(UnityObject obj) {
+            if (obj is GameObject go)
+                return go.GetComponentsInChildren<Renderer>(true);
+            else if (obj is Renderer r)
+                return new[] { r };
+            else
+                return Enumerable.Empty<Renderer>();
+        }
+
+        bool IsAcceptableObject(Renderer r) =>
+            (r is SkinnedMeshRenderer smr && IsAcceptableObject(smr)) ||
+            (r is MeshRenderer mr && IsAcceptableObject(mr));
+
+        bool IsAcceptableObject(SkinnedMeshRenderer smr) => smr != null && smr.sharedMesh != null && !sources.Contains(smr);
+
+        bool IsAcceptableObject(MeshRenderer mr) => mr != null && mr.TryGetComponent(out MeshFilter mf) && mf.sharedMesh != null && !sources.Contains(mr);
 
         T AutoCreateRenderer<T>() where T : Renderer {
             var commonParent = FindCommonParent(sources.Select(x => x.transform));
@@ -572,7 +613,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
 
         void OnListAdd(ReorderableList list) {
             var count = sources.Count;
-            sources.AddRange(Selection.GetFiltered<Renderer>(SelectionMode.Deep).Where(r => r != null && !sources.Contains(r) && (r is SkinnedMeshRenderer || r is MeshRenderer)));
+            sources.AddRange(Selection.GetFiltered<Renderer>(SelectionMode.Deep).Where(IsAcceptableObject));
             if (count == sources.Count) return;
             sourceList.index = sources.Count - 1;
             RefreshCombineMeshOptions();

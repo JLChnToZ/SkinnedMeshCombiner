@@ -415,6 +415,7 @@ namespace JLChnToZ {
             readonly float weight;
             readonly string name;
             Vector3[] deltaVertices, deltaNormals, deltaTangents;
+            bool hasTrimmed;
 
             public BlendShapeCutter(Mesh mesh, int shapeIndex, int frame) {
                 name = mesh.GetBlendShapeName(shapeIndex);
@@ -432,9 +433,12 @@ namespace JLChnToZ {
             }
 
             public override void Apply(Mesh mesh) {
-                if (deltaVertices != null) Array.Resize(ref deltaVertices, deltaVertices.Length - offset);
-                if (deltaNormals != null) Array.Resize(ref deltaNormals, deltaNormals.Length - offset);
-                if (deltaTangents != null) Array.Resize(ref deltaTangents, deltaTangents.Length - offset);
+                if (!hasTrimmed) {
+                    hasTrimmed = true;
+                    if (deltaVertices != null) Array.Resize(ref deltaVertices, deltaVertices.Length - offset);
+                    if (deltaNormals != null) Array.Resize(ref deltaNormals, deltaNormals.Length - offset);
+                    if (deltaTangents != null) Array.Resize(ref deltaTangents, deltaTangents.Length - offset);
+                }
                 mesh.AddBlendShapeFrame(name, weight, deltaVertices, deltaNormals, deltaTangents);
             }
         }
