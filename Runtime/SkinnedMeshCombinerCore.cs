@@ -32,7 +32,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     using static UnityEngine.Object;
     using static Utils;
 
-    public class SkinnedMeshCombinerCore {
+    public class SkinnedMeshCombinerCore : IDisposable {
         readonly Dictionary<Material, List<(CombineInstance combineInstance, CombineBlendshapeFlags[] flags)>> combineInstances =
             new Dictionary<Material, List<(CombineInstance, CombineBlendshapeFlags[])>>();
         readonly Dictionary<(Mesh mesh, int index), IEnumerable<BoneWeight>> boneWeights = new Dictionary<(Mesh, int), IEnumerable<BoneWeight>>();
@@ -71,25 +71,25 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 disallowedFlags = CombineMeshFlags.CreateBoneForNonSkinnedMesh;
                 blendShapeCopyMode = BlendShapeCopyMode.None;
             }
-            var core = new SkinnedMeshCombinerCore(blendShapeCopyMode, boneRemap);
-            #if UNITY_EDITOR
-            Undo.IncrementCurrentGroup();
-            int group = Undo.GetCurrentGroup();
-            #endif
-            foreach (var (source, bakeFlags, localMergeFlags) in sources) {
-                if (source is SkinnedMeshRenderer smr)
-                    core.Add(smr, bakeFlags, (mergeFlags | localMergeFlags) & ~disallowedFlags);
-                else if (source is MeshRenderer mr)
-                    core.Add(mr, destination, (mergeFlags | localMergeFlags) & ~disallowedFlags);
+            using (var core = new SkinnedMeshCombinerCore(blendShapeCopyMode, boneRemap)) {
+                #if UNITY_EDITOR
+                Undo.IncrementCurrentGroup();
+                int group = Undo.GetCurrentGroup();
+                #endif
+                foreach (var (source, bakeFlags, localMergeFlags) in sources) {
+                    if (source is SkinnedMeshRenderer smr)
+                        core.Add(smr, bakeFlags, (mergeFlags | localMergeFlags) & ~disallowedFlags);
+                    else if (source is MeshRenderer mr)
+                        core.Add(mr, destination, (mergeFlags | localMergeFlags) & ~disallowedFlags);
+                }
+                if (mergeFlags.HasFlag(CombineMeshFlags.MergeSubMeshes)) core.MergeSubMeshes();
+                var result = core.Combine(destination);
+                #if UNITY_EDITOR
+                Undo.SetCurrentGroupName("Combine Meshes");
+                Undo.CollapseUndoOperations(group);
+                #endif
+                return result;
             }
-            if (mergeFlags.HasFlag(CombineMeshFlags.MergeSubMeshes)) core.MergeSubMeshes();
-            var result = core.Combine(destination);
-            #if UNITY_EDITOR
-            Undo.SetCurrentGroupName("Combine Meshes");
-            Undo.CollapseUndoOperations(group);
-            #endif
-            core.CleanUp();
-            return result;
         }
 
         public SkinnedMeshCombinerCore(
@@ -393,6 +393,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             mesh.CombineMeshes(combineInstances, mergeSubMeshes, true);
         }
+
+        void IDisposable.Dispose() => CleanUp();
 
         public void CleanUp() {
             foreach (var (mesh, _) in boneWeights.Keys)

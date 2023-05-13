@@ -108,6 +108,7 @@ namespace JLChnToZ.CommonUtils {
             #if UNITY_EDITOR
             if (!isDirty) return;
             isDirty = false;
+            isSorted = set is SortedSet<T>;
             values = new T[set.Count];
             set.CopyTo(values, 0);
             #endif

@@ -208,7 +208,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
                     return (source, bakeBlendShapeToggles.blendShapeFlags, bakeBlendShapeToggles.combineMeshFlags);
                 return (source, null, CombineMeshFlags.None);
-            }).ToArray(), destination, mergeFlags, blendShapeCopyMode, boneReamp);
+            }).ToArray(), destination, mergeFlags, blendShapeCopyMode, boneReamp, blendshapeNameMap);
             if (mesh != null) {
                 mesh.Optimize();
                 if (destination is SkinnedMeshRenderer skinnedMeshRenderer)
