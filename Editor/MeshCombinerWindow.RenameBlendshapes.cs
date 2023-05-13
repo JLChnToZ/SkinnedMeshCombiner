@@ -61,14 +61,19 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 foreach (var blendshapeName in allBlendshapeNames) {
                     if (!blendshapeNameMap.TryGetValue(blendshapeName, out var mappedName))
                         mappedName = blendshapeName;
-                    using (var changed = new EditorGUI.ChangeCheckScope()) {
-                        mappedName = EditorGUILayout.TextField(blendshapeName, mappedName);
-                        if (changed.changed) blendshapeNameMap[blendshapeName] = mappedName;
+                    using (new EditorGUILayout.HorizontalScope()) {
+                        using (var changed = new EditorGUI.ChangeCheckScope()) {
+                            mappedName = EditorGUILayout.TextField(blendshapeName, mappedName);
+                            if (changed.changed) blendshapeNameMap[blendshapeName] = mappedName;
+                        }
+                        if (GUILayout.Button("Reset", EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
+                            blendshapeNameMap.Remove(blendshapeName);
                     }
                 }
             }
             using (new EditorGUILayout.HorizontalScope()) {
                 if (GUILayout.Button("Refresh", EditorStyles.miniButton, GUILayout.ExpandWidth(false))) RefreshBlendshapes();
+                if (GUILayout.Button("Reset All", EditorStyles.miniButton, GUILayout.ExpandWidth(false))) blendshapeNameMap.Clear();
             }
         }
     }
