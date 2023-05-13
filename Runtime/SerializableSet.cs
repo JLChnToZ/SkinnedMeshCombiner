@@ -114,9 +114,11 @@ namespace JLChnToZ.CommonUtils {
         }
 
         void ISerializationCallbackReceiver.OnAfterDeserialize() {
-            set = isSorted ? new SortedSet<T>() as ISet<T> : new HashSet<T>() as ISet<T>;
-            foreach (var key in values) {
-                set.Add(key);
+            if (set == null || (isSorted ? set is HashSet<T> : set is SortedSet<T>))
+                set = isSorted ? new SortedSet<T>(values) as ISet<T> : new HashSet<T>(values) as ISet<T>;
+            else {
+                set.Clear();
+                set.UnionWith(values);
             }
             #if UNITY_EDITOR
             isDirty = false;
