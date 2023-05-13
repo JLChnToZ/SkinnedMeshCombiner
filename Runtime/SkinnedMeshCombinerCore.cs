@@ -49,6 +49,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         readonly List<Vector3> vertices, normals;
         readonly List<Vector4> tangents;
         IDictionary<Transform, Transform> boneRemap;
+        IDictionary<string, string> blendShapeRemap;
         Dictionary<string, BlendShapeTimeLine> blendShapesStore;
         readonly Dictionary<string, float> blendShapesWeights = new Dictionary<string, float>();
         Bounds bounds;
@@ -61,7 +62,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             Renderer destination,
             CombineMeshFlags mergeFlags = CombineMeshFlags.MergeSubMeshes,
             BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices,
-            IDictionary<Transform, Transform> boneRemap = null
+            IDictionary<Transform, Transform> boneRemap = null,
+            IDictionary<string, string> blendShapeRemap = null
         ) {
             var disallowedFlags = CombineMeshFlags.None;
             if (!(destination is SkinnedMeshRenderer)) {
@@ -90,9 +92,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             return result;
         }
 
-        public SkinnedMeshCombinerCore(BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices, IDictionary<Transform, Transform> boneRemap = null) {
+        public SkinnedMeshCombinerCore(
+            BlendShapeCopyMode blendShapeCopyMode = BlendShapeCopyMode.Vertices,
+            IDictionary<Transform, Transform> boneRemap = null,
+            IDictionary<string, string> blendShapeRemap = null
+        ) {
             this.blendShapeCopyMode = blendShapeCopyMode;
             this.boneRemap = boneRemap;
+            this.blendShapeRemap = blendShapeRemap;
             vertices = new List<Vector3>();
             normals = new List<Vector3>();
             tangents = new List<Vector4>();
@@ -324,7 +331,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     return weights;
                 }).Where(x => x != null).SelectMany(x => x).ToArray();
                 combinedNewMesh.bindposes = bindPoseArray;
-                if (blendShapeCopyMode != BlendShapeCopyMode.None) CopyBlendShapes(combinedNewMesh, combineInstanceArray);
+                if (blendShapeCopyMode != BlendShapeCopyMode.None) CopyBlendShapes(combinedNewMesh, combineInstanceArray, true);
             }
             foreach (var combines in combineInstances.Values) combines.Clear();
             combinedNewMesh.RecalculateBounds();
@@ -407,7 +414,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             dummyTransform = null;
         }
 
-        public void CopyBlendShapes(Mesh combinedNewMesh, IEnumerable<(CombineInstance, CombineBlendshapeFlags[])> combineInstances) {
+        public void CopyBlendShapes(Mesh combinedNewMesh, IEnumerable<(CombineInstance, CombineBlendshapeFlags[])> combineInstances, bool useRemappedName = false) {
             if (!LazyInitialize(ref blendShapesStore)) blendShapesStore.Clear();
             int offset = 0;
             var supportedCopyMode = BlendShapeCopyMode.None;
@@ -424,7 +431,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
                 offset += subMesh.vertexCount;
             }
-            foreach (var timeline in blendShapesStore) timeline.Value.ApplyTo(combinedNewMesh, timeline.Key, blendShapeCopyMode & supportedCopyMode, ref vntArrayCache, ref vntArrayCache2);
+            foreach (var timeline in blendShapesStore) {
+                var key = timeline.Key;
+                if (useRemappedName && blendShapeRemap != null && blendShapeRemap.TryGetValue(key, out var remappedName))
+                    key = remappedName;
+                timeline.Value.ApplyTo(combinedNewMesh, key, blendShapeCopyMode & supportedCopyMode, ref vntArrayCache, ref vntArrayCache2);
+            }
         }
 
         static void ApplyBlendShape(List<Vector3> source, Vector3[] blendShapeDataPrev, Vector3[] blendShapeDataNext, float lerp, int offset, int count) {

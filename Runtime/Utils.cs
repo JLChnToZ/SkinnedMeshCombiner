@@ -20,6 +20,7 @@
  * SOFTWARE.
  */
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -157,5 +158,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     return false;
             return true;
         }
+
+        public static IEnumerable<string> EnumerateBlendshapeNames(Mesh mesh) => Enumerable.Range(0, mesh.blendShapeCount).Select(mesh.GetBlendShapeName);
+
+        public static string[] GetBlendshapeNamesArray(Mesh mesh) => EnumerateBlendshapeNames(mesh).ToArray();
     }
 }

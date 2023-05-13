@@ -28,6 +28,7 @@ using UnityEditorInternal;
 using JLChnToZ.CommonUtils;
 
 namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
+    using static Utils;
     public partial class MeshCombinerWindow : EditorWindow {
         const string COMBINE_MESH_INFO = "Select (skinned) mesh renderer(s) and/or its parent, and click \"+\" button to add to the combine list.\n" +
             "Even it is not necessary in many cases, you may drag to change the processing order.\n" +
@@ -279,7 +280,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles)) {
                     if (bakeBlendShapeToggles.blendShapeFlags.Length != length)
                         bakeBlendShapeToggles.blendShapeFlags = new CombineBlendshapeFlags[length];
-                    bakeBlendShapeToggles.blendShapeNames = skinnedMeshRenderer != null ? GetBlendShapeNames(mesh) : new string[0];
+                    bakeBlendShapeToggles.blendShapeNames = skinnedMeshRenderer != null ? GetBlendshapeNamesArray(mesh) : new string[0];
                 } else {
                     bakeBlendShapeToggles = new BakeBlendShapeToggles(
                         new CombineBlendshapeFlags[length],
@@ -287,7 +288,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         CombineMeshFlags.RemoveSubMeshWithoutMaterials |
                         CombineMeshFlags.RemoveMeshPortionsWithoutBones,
                         false,
-                        skinnedMeshRenderer != null ? GetBlendShapeNames(mesh) : new string[0]
+                        skinnedMeshRenderer != null ? GetBlendshapeNamesArray(mesh) : new string[0]
                     );
                 }
                 bakeBlendShapeMap[source] = bakeBlendShapeToggles;
@@ -295,7 +296,5 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             foreach (var source in oldSources) bakeBlendShapeMap.Remove(source);
         }
-
-        static string[] GetBlendShapeNames(Mesh mesh) => Enumerable.Range(0, mesh.blendShapeCount).Select(mesh.GetBlendShapeName).ToArray();
     }
 }

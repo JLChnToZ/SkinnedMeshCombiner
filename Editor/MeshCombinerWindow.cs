@@ -44,7 +44,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public enum Tabs : byte {
             CombineMeshes,
             CombineBones,
-            ManupulateBlendshapes,
+            BlendshapesRename,
             Cleanup,
         }
 
@@ -60,11 +60,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public static void ShowWindow() => GetWindow<MeshCombinerWindow>("Skinned Mesh Combiner").Show(true);
 
         protected virtual void OnEnable() {
+            if (tabNames == null) tabNames = Array.ConvertAll(Enum.GetNames(typeof(Tabs)), ObjectNames.NicifyVariableName);
             InitCombineMeshTab();
             switch (currentTab) {
                 case Tabs.CombineMeshes: RefreshCombineMeshOptions(); break;
                 case Tabs.CombineBones: RefreshBones(); break;
-                case Tabs.ManupulateBlendshapes: break;
+                case Tabs.BlendshapesRename: RefreshBlendshapes(); break;
                 case Tabs.Cleanup: UpdateSafeDeleteObjects(); break;
             }
         }
@@ -72,7 +73,6 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         protected virtual void OnGUI() {
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginChangeCheck();
-            if (tabNames == null) tabNames = Array.ConvertAll(Enum.GetNames(typeof(Tabs)), ObjectNames.NicifyVariableName);
             currentTab = (Tabs)GUILayout.Toolbar((int)currentTab, tabNames, GUILayout.ExpandWidth(true));
             bool tabChanged = EditorGUI.EndChangeCheck();
             EditorGUILayout.EndHorizontal();
@@ -85,9 +85,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     if (tabChanged) RefreshBones();
                     DrawCombineBoneTab();
                     break;
-                case Tabs.ManupulateBlendshapes:
-                
-                    EditorGUILayout.LabelField("WIP");
+                case Tabs.BlendshapesRename:
+                    if (tabChanged) RefreshBlendshapes();
+                    DrawBlendshapeTab();
                     break;
                 case Tabs.Cleanup:
                     if (tabChanged) UpdateSafeDeleteObjects();
@@ -108,6 +108,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 bonesToMergeUpwards.Clear();
                 boneToRenderersMap.Clear();
                 boneFolded.Clear();
+                allBlendshapeNames.Clear();
+                blendshapeNameMap.Clear();
                 destination = null;
                 currentTab = 0;
             }
