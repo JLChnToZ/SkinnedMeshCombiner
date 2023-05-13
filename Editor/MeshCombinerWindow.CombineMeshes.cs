@@ -311,11 +311,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 unusedBlendshapes.Clear();
                 unusedBlendshapes.UnionWith(EnumerateBlendshapeNames(mesh));
                 unusedBlendshapes.ExceptWith(ReportUsedBlendshapes(smr, mesh));
-                if (isDeselect)
+                if (isDeselect) {
                     for (int i = 0, count = mesh.blendShapeCount; i < count; i++)
                         if (!unusedBlendshapes.Contains(mesh.GetBlendShapeName(i)))
                             bakeBlendShapeToggles.blendShapeFlags[i] = CombineBlendshapeFlags.None;
-                else
+                } else
                     foreach (var key in unusedBlendshapes) {
                         int index = mesh.GetBlendShapeIndex(key);
                         if (index >= 0 && bakeBlendShapeToggles.blendShapeFlags[index] == CombineBlendshapeFlags.None)
