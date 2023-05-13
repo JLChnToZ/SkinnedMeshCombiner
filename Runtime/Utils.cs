@@ -162,5 +162,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         public static IEnumerable<string> EnumerateBlendshapeNames(Mesh mesh) => Enumerable.Range(0, mesh.blendShapeCount).Select(mesh.GetBlendShapeName);
 
         public static string[] GetBlendshapeNamesArray(Mesh mesh) => EnumerateBlendshapeNames(mesh).ToArray();
+
+        public static string GetTransformPath(Transform transform, Transform relativeTo = null) {
+            var names = new Stack<string>();
+            for (; transform != null && transform != relativeTo; transform = transform.parent)
+                names.Push(transform.name);
+            return string.Join("/", names.ToArray());
+        }
     }
 }
