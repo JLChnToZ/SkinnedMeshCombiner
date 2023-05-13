@@ -1,7 +1,8 @@
 {
     "name": "JLChnToZ.EditorUtils.SkinnedMeshCombiner.Editor",
-    "rootNamespace": "",
-    "references": [],
+    "references": [
+        "GUID:6e50840ef956230439f54d38dce3f954"
+    ],
     "includePlatforms": [
         "Editor"
     ],

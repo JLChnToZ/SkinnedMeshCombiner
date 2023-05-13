@@ -24,7 +24,9 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
+#if UNITY_EDITOR
 using UnityEditor;
+#endif
 
 namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     using static UnityEngine.Object;
@@ -68,8 +70,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 blendShapeCopyMode = BlendShapeCopyMode.None;
             }
             var core = new SkinnedMeshCombinerCore(blendShapeCopyMode, boneRemap);
+            #if UNITY_EDITOR
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
+            #endif
             foreach (var (source, bakeFlags, localMergeFlags) in sources) {
                 if (source is SkinnedMeshRenderer smr)
                     core.Add(smr, bakeFlags, (mergeFlags | localMergeFlags) & ~disallowedFlags);
@@ -78,8 +82,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             if (mergeFlags.HasFlag(CombineMeshFlags.MergeSubMeshes)) core.MergeSubMeshes();
             var result = core.Combine(destination);
+            #if UNITY_EDITOR
             Undo.SetCurrentGroupName("Combine Meshes");
             Undo.CollapseUndoOperations(group);
+            #endif
             core.CleanUp();
             return result;
         }
@@ -262,7 +268,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     boneWeights[(mesh, i)] = Enumerable.Repeat(mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
             }
             if (destination != source) {
+                #if UNITY_EDITOR
                 Undo.RecordObject(source, "Combine Meshes");
+                #endif
                 source.enabled = false;
             }
         }
@@ -322,7 +330,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             combinedNewMesh.RecalculateBounds();
             combinedNewMesh.UploadMeshData(false);
             if (destination is SkinnedMeshRenderer skinnedMeshRenderer) {
+                #if UNITY_EDITOR
                 Undo.RecordObject(skinnedMeshRenderer, "Combine Meshes");
+                #endif
                 skinnedMeshRenderer.sharedMesh = combinedNewMesh;
                 var rootBone = skinnedMeshRenderer.rootBone;
                 if (rootBone == null) {
@@ -352,9 +362,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                     if (index >= 0) skinnedMeshRenderer.SetBlendShapeWeight(index, kv.Value);
                 }
             } else if (destination is MeshRenderer && destination.TryGetComponent(out MeshFilter meshFilter)) {
+                #if UNITY_EDITOR
                 Undo.RecordObject(meshFilter, "Combine Meshes");
+                #endif
                 meshFilter.sharedMesh = combinedNewMesh;
+                #if UNITY_EDITOR
                 Undo.RecordObject(destination, "Combine Meshes");
+                #endif
             }
             destination.sharedMaterials = materials.ToArray();
             return combinedNewMesh;
