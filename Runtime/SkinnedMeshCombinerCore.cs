@@ -73,8 +73,11 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             using (var core = new SkinnedMeshCombinerCore(blendShapeCopyMode, boneRemap)) {
                 #if UNITY_EDITOR
-                Undo.IncrementCurrentGroup();
-                int group = Undo.GetCurrentGroup();
+                int group = -1;
+                if (!Application.isPlaying) {
+                    Undo.IncrementCurrentGroup();
+                    group = Undo.GetCurrentGroup();
+                }
                 #endif
                 foreach (var (source, bakeFlags, localMergeFlags) in sources) {
                     if (source is SkinnedMeshRenderer smr)
@@ -85,8 +88,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 if (mergeFlags.HasFlag(CombineMeshFlags.MergeSubMeshes)) core.MergeSubMeshes();
                 var result = core.Combine(destination);
                 #if UNITY_EDITOR
-                Undo.SetCurrentGroupName("Combine Meshes");
-                Undo.CollapseUndoOperations(group);
+                if (!Application.isPlaying) {
+                    Undo.SetCurrentGroupName("Combine Meshes");
+                    Undo.CollapseUndoOperations(group);
+                }
                 #endif
                 return result;
             }
@@ -276,7 +281,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             }
             if (destination != source) {
                 #if UNITY_EDITOR
-                Undo.RecordObject(source, "Combine Meshes");
+                if (!Application.isPlaying)
+                    Undo.RecordObject(source, "Combine Meshes");
                 #endif
                 source.enabled = false;
             }
@@ -338,7 +344,8 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             combinedNewMesh.UploadMeshData(false);
             if (destination is SkinnedMeshRenderer skinnedMeshRenderer) {
                 #if UNITY_EDITOR
-                Undo.RecordObject(skinnedMeshRenderer, "Combine Meshes");
+                if (!Application.isPlaying)
+                    Undo.RecordObject(skinnedMeshRenderer, "Combine Meshes");
                 #endif
                 skinnedMeshRenderer.sharedMesh = combinedNewMesh;
                 var rootBone = skinnedMeshRenderer.rootBone;
@@ -370,11 +377,13 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 }
             } else if (destination is MeshRenderer && destination.TryGetComponent(out MeshFilter meshFilter)) {
                 #if UNITY_EDITOR
-                Undo.RecordObject(meshFilter, "Combine Meshes");
+                if (!Application.isPlaying)
+                    Undo.RecordObject(meshFilter, "Combine Meshes");
                 #endif
                 meshFilter.sharedMesh = combinedNewMesh;
                 #if UNITY_EDITOR
-                Undo.RecordObject(destination, "Combine Meshes");
+                if (!Application.isPlaying)
+                    Undo.RecordObject(destination, "Combine Meshes");
                 #endif
             }
             destination.sharedMaterials = materials.ToArray();
