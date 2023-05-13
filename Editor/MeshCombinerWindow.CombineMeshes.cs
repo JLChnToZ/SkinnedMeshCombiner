@@ -132,6 +132,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             blendShapeCopyMode = (BlendShapeCopyMode)EditorGUILayout.EnumFlagsField("Blend Shape Copy Mode", blendShapeCopyMode);
             EditorGUI.EndDisabledGroup();
             mergeFlags = DrawFlag(mergeFlags, "Merge sub meshes with same material", CombineMeshFlags.MergeSubMeshes);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Select Unused Blendshapes", EditorStyles.miniButton, GUILayout.ExpandWidth(false))) TryMarkUnusedBlendshapes();
+            if (GUILayout.Button("Deselect In-Use Blendshapes", EditorStyles.miniButton, GUILayout.ExpandWidth(false))) TryMarkUnusedBlendshapes(true);
+            EditorGUILayout.EndHorizontal();
         }
 
         
@@ -295,6 +299,94 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 oldSources.Remove(source);
             }
             foreach (var source in oldSources) bakeBlendShapeMap.Remove(source);
+        }
+
+        void TryMarkUnusedBlendshapes(bool isDeselect = false) {
+            var unusedBlendshapes = new HashSet<string>();
+            foreach (var renderer in sources) {
+                if (!(renderer is SkinnedMeshRenderer smr)) continue;
+                if (!bakeBlendShapeMap.TryGetValue(renderer, out var bakeBlendShapeToggles)) continue;
+                var mesh = smr.sharedMesh;
+                if (mesh == null) continue;
+                unusedBlendshapes.Clear();
+                unusedBlendshapes.UnionWith(EnumerateBlendshapeNames(mesh));
+                unusedBlendshapes.ExceptWith(ReportUsedBlendshapes(smr, mesh));
+                if (isDeselect)
+                    for (int i = 0, count = mesh.blendShapeCount; i < count; i++)
+                        if (!unusedBlendshapes.Contains(mesh.GetBlendShapeName(i)))
+                            bakeBlendShapeToggles.blendShapeFlags[i] = CombineBlendshapeFlags.None;
+                else
+                    foreach (var key in unusedBlendshapes) {
+                        int index = mesh.GetBlendShapeIndex(key);
+                        if (index >= 0 && bakeBlendShapeToggles.blendShapeFlags[index] == CombineBlendshapeFlags.None)
+                            bakeBlendShapeToggles.blendShapeFlags[index] = CombineBlendshapeFlags.CombineBlendShape;
+                    }
+            }
+        }
+
+        static IEnumerable<string> ReportUsedBlendshapes(Renderer renderer, Mesh mesh) {
+            const string PREFIX = "blendShape.";
+            var animClips = new HashSet<(Transform, AnimationClip)>();
+            foreach (var (component, controller) in GetAnimationSources(renderer)) {
+                if (controller == null) continue;
+                foreach (var clip in controller.animationClips)
+                    animClips.Add((component, clip));
+            }
+            foreach (var (transform, clip) in animClips) {
+                foreach (var binding in AnimationUtility.GetCurveBindings(clip)) {
+                    if (binding.type != typeof(SkinnedMeshRenderer) ||
+                        binding.path != GetTransformPath(renderer.transform, transform) ||
+                        binding.propertyName != PREFIX && !binding.propertyName.StartsWith(PREFIX)) continue;
+                    yield return binding.propertyName.Substring(PREFIX.Length);
+                }
+            }
+            // VRChat Avatars (SDK3)
+            var type = Type.GetType("VRC.SDK3.Avatars.Components.VRCAvatarDescriptor, VRCSDK3A", false);
+            if (type != null) {
+                dynamic avatarDescriptor = renderer.GetComponentInParent(type);
+                if (avatarDescriptor != null) {
+                    if (avatarDescriptor.VisemeSkinnedMesh == renderer) {
+                        var visemeBlendShapes = avatarDescriptor.VisemeBlendShapes;
+                        if (visemeBlendShapes is string[] visemeBlendShapesArray)
+                            foreach (var name in visemeBlendShapesArray)
+                                yield return name;
+                    }
+                    var customEyeLookSettings = avatarDescriptor.customEyeLookSettings;
+                    if (customEyeLookSettings.eyelidsSkinnedMesh == renderer) {
+                        var eyelidsBlendshapes = customEyeLookSettings.eyelidsBlendshapes;
+                        if (eyelidsBlendshapes is int[] eyelidsBlendshapesArray)
+                            foreach (var index in eyelidsBlendshapesArray)
+                                yield return mesh.GetBlendShapeName(index);
+                    }
+                }
+            }
+            // TODO: Add more animation sources from other SDKs
+        }
+
+        static IEnumerable<(Transform, RuntimeAnimatorController)> GetAnimationSources(Renderer renderer) {
+            var animator = renderer.GetComponentInParent<Animator>();
+            if (animator != null) {
+                var controller = animator.runtimeAnimatorController;
+                if (controller != null) {
+                    yield return (animator.transform, controller);
+                }
+            }
+            var gathered = new HashSet<(Transform, RuntimeAnimatorController)>();
+            // VRChat Avatars (Universal SDK Versions)
+            var type = Type.GetType("VRC.SDKBase.VRC_AvatarDescriptor, VRCSDKBase", false);
+            if (type != null) {
+                var avatarDescriptor = renderer.GetComponentInParent(type);
+                if (avatarDescriptor != null)
+                    using (var so = new SerializedObject(avatarDescriptor)) {
+                        var prop = so.GetIterator();
+                        while (prop.Next(true))
+                            if (prop.propertyType == SerializedPropertyType.ObjectReference &&
+                                prop.objectReferenceValue is RuntimeAnimatorController rac)
+                                gathered.Add((avatarDescriptor.transform, rac));
+                    }
+            }
+            // TODO: Add more animation sources from other SDKs
+            foreach (var additionalResuls in gathered) yield return additionalResuls;
         }
     }
 }
