@@ -52,7 +52,6 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             EditorGUILayout.HelpBox(COMBINE_BONE_INFO, MessageType.Info);
             boneMergeScrollPos = EditorGUILayout.BeginScrollView(boneMergeScrollPos);
             bool isMeshRenderer = destination is MeshRenderer;
-            bool isSkinnedMeshRenderer = destination is SkinnedMeshRenderer;
             var drawStack = new Stack<(Transform, int)>();
             foreach (var transform in rootTransforms)
                 drawStack.Push((transform, 0));
@@ -93,7 +92,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                         GUILayout.ExpandWidth(false)
                     );
                     EditorGUI.EndDisabledGroup();
-                    if (EditorGUI.EndChangeCheck() && isSkinnedMeshRenderer) {
+                    if (EditorGUI.EndChangeCheck() && !isMeshRenderer) {
                         if (isMerge)
                             bonesToMergeUpwards.Add(transform);
                         else
