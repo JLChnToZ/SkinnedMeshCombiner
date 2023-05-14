@@ -269,15 +269,15 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 bounds.Encapsulate(source.bounds);
             var mesh = Instantiate(orgMesh);
             var sharedMaterials = source.sharedMaterials;
-            int index = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? 0 : GetBoneIndex(sourceTransform, Matrix4x4.identity);
-            var transform = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? sourceTransform.localToWorldMatrix * destination.worldToLocalMatrix : Matrix4x4.identity;
+            int index = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? GetBoneIndex(sourceTransform, Matrix4x4.identity) : 0;
+            var transform = mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? Matrix4x4.identity : sourceTransform.localToWorldMatrix * destination.worldToLocalMatrix;
             for (int i = 0, count = mesh.subMeshCount; i < count; i++) {
                 if (mesh.GetSubMesh(i).vertexCount <= 0) continue;
                 var sharedMaterial = i < sharedMaterials.Length ? sharedMaterials[i] : null;
                 if (sharedMaterial == null && mergeFlags.HasFlag(CombineMeshFlags.RemoveSubMeshWithoutMaterials)) continue;
                 GetCombines(sharedMaterial).Add((new CombineInstance { mesh = mesh, subMeshIndex = i, transform = transform }, new[] { CombineBlendshapeFlags.CombineBlendShape }));
                 if (!mergeFlags.HasFlag(CombineMeshFlags.BakeMesh))
-                    boneWeights[(mesh, i)] = Enumerable.Repeat(mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? default : new BoneWeight { boneIndex0 = index, weight0 = 1 }, mesh.GetSubMesh(i).vertexCount);
+                    boneWeights[(mesh, i)] = Enumerable.Repeat(mergeFlags.HasFlag(CombineMeshFlags.CreateBoneForNonSkinnedMesh) ? new BoneWeight { boneIndex0 = index, weight0 = 1 } : default, mesh.GetSubMesh(i).vertexCount);
             }
             if (destination != source) {
                 #if UNITY_EDITOR

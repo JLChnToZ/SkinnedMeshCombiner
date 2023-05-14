@@ -204,7 +204,7 @@ namespace JLChnToZ {
             public virtual bool SupportsSkipToFirstVertex => true;
 
             public static StreamCutter Get(Mesh mesh, VertexAttribute attribute) {
-                if (!mesh.HasVertexAttribute(attribute)) return null;
+                if (!mesh.HasVertexAttribute(attribute) && attribute != VertexAttribute.BlendWeight) return null;
                 switch (attribute) {
                     case VertexAttribute.Position: return new VertexStreamCutter3(mesh, attribute);
                     case VertexAttribute.Normal: return new VertexStreamCutter3(mesh, attribute);
@@ -235,7 +235,10 @@ namespace JLChnToZ {
                         if (mesh.HasVertexAttribute(VertexAttribute.BlendIndices))
                             return new BoneCutter(mesh);
                         break;
-                    case VertexAttribute.BlendIndices: return new BindposeCutter(mesh);
+                    case VertexAttribute.BlendIndices:
+                        if (!mesh.HasVertexAttribute(VertexAttribute.BlendWeight))
+                            Debug.LogWarning("BlendIndices stream found but BlendWeight stream not found.");
+                        return new BindposeCutter(mesh);
                 }
                 return null;
             }
