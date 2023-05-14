@@ -68,6 +68,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 case Tabs.BlendshapesRename: RefreshBlendshapes(); break;
                 case Tabs.Cleanup: UpdateSafeDeleteObjects(); break;
             }
+            OnListAdd(sourceList);
         }
 
         protected virtual void OnGUI() {

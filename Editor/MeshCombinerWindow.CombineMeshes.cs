@@ -177,7 +177,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 var states2 = CombineBlendshapeFlags.None;
                 for (var i = 0; i < bakeBlendShapeToggles.blendShapeFlags.Length; i++) {
                     bool currentState = isMeshRenderer || bakeBlendShapeToggles.blendShapeFlags[i] != CombineBlendshapeFlags.None;
-                    rect2.width = rect.width - 128;
+                    rect2.width = rect.width - 128 - rect2.x;
                     EditorGUI.BeginChangeCheck();
                     EditorGUI.BeginDisabledGroup(isMeshRenderer);
                     currentState = EditorGUI.ToggleLeft(rect2, $"Bake blend shape {bakeBlendShapeToggles.blendShapeNames[i]}", currentState);
