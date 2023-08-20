@@ -251,9 +251,9 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
                 } else
                     blendShapesWeights[mesh.GetBlendShapeName(i)] = source.GetBlendShapeWeight(i);
             if (hasApplyBlendShape) {
-                if (vertices != null) mesh.SetVertices(vertices);
-                if (normals != null) mesh.SetNormals(normals);
-                if (tangents != null) mesh.SetTangents(tangents);
+                if (vertices != null && vertices.Count > 0) mesh.SetVertices(vertices);
+                if (normals != null && normals.Count > 0) mesh.SetNormals(normals);
+                if (tangents != null && tangents.Count > 0) mesh.SetTangents(tangents);
                 mesh.UploadMeshData(false);
             }
         }
@@ -451,7 +451,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         static void ApplyBlendShape(List<Vector3> source, Vector3[] blendShapeDataPrev, Vector3[] blendShapeDataNext, float lerp, int offset, int count) {
-            if (source == null) return;
+            if (source == null || source.Count == 0) return;
             for (int i = 0; i < count; i++) {
                 var index = offset + i;
                 source[index] += blendShapeDataPrev == null ? blendShapeDataNext[index] * lerp :
@@ -461,7 +461,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
         }
 
         static void ApplyBlendShape(List<Vector4> source, Vector3[] blendShapeDataPrev, Vector3[] blendShapeDataNext, float lerp, int offset, int count) {
-            if (source == null) return;
+            if (source == null || source.Count == 0) return;
             for (int i = 0; i < count; i++) {
                 var index = offset + i;
                 source[index] += (Vector4)(blendShapeDataPrev == null ? blendShapeDataNext[index] * lerp :
