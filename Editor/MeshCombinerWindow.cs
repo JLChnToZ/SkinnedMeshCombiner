@@ -1,4 +1,4 @@
-﻿/**
+/**
  * The MIT License (MIT)
  *
  * Copyright (c) 2023 Jeremy Lam aka. Vistanz
@@ -26,13 +26,11 @@ using UnityEngine;
 using UnityEditor;
 using UnityObject = UnityEngine.Object;
 
-namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
-{
+namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
     using JLChnToZ.CommonUtils;
     using static Utils;
-
-    public partial class MeshCombinerWindow : EditorWindow
-    {
+    
+    public partial class MeshCombinerWindow : EditorWindow {
         const string COMBINE_INFO = "Click combine to...\n" +
             "- Combine meshes while retains blendshapes and bones\n" +
             "- Merge sub meshes with same material into one\n" +
@@ -43,15 +41,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
             "- Deactivates combined mesh renderer sources";
         const string MESH_RENDERER_INFO = "The destination is an ordinary mesh renderer, all blend shapes and bones will enforced to combined and dereferenced.";
 
-        public enum Tabs : byte
-        {
+        public enum Tabs : byte {
             CombineMeshes,
             CombineBones,
             BlendshapesRename,
             Cleanup,
         }
 
-        [Serializable] class TransformSet : SerializableSet<Transform> { }
+        [Serializable] class TransformSet : SerializableSet<Transform> {}
 
         static string[] tabNames;
         static GUIContent dropdownIcon;
@@ -62,12 +59,10 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
         [MenuItem("JLChnToZ/Tools/Skinned Mesh Combiner")]
         public static void ShowWindow() => GetWindow<MeshCombinerWindow>("Skinned Mesh Combiner").Show(true);
 
-        protected virtual void OnEnable()
-        {
+        protected virtual void OnEnable() {
             if (tabNames == null) tabNames = Array.ConvertAll(Enum.GetNames(typeof(Tabs)), ObjectNames.NicifyVariableName);
             InitCombineMeshTab();
-            switch (currentTab)
-            {
+            switch (currentTab) {
                 case Tabs.CombineMeshes: RefreshCombineMeshOptions(); break;
                 case Tabs.CombineBones: RefreshBones(); break;
                 case Tabs.BlendshapesRename: RefreshBlendshapes(); break;
@@ -76,16 +71,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
             OnListAdd(sourceList);
         }
 
-        protected virtual void OnGUI()
-        {
+        protected virtual void OnGUI() {
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginChangeCheck();
             currentTab = (Tabs)GUILayout.Toolbar((int)currentTab, tabNames, GUILayout.ExpandWidth(true));
             bool tabChanged = EditorGUI.EndChangeCheck();
             EditorGUILayout.EndHorizontal();
-            switch (currentTab)
-            {
-                case Tabs.CombineMeshes:
+            switch (currentTab) {
+                case Tabs.CombineMeshes: 
                     if (tabChanged) RefreshCombineMeshOptions();
                     DrawCombineMeshTab();
                     break;
@@ -107,8 +100,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
             EditorGUI.BeginDisabledGroup(sources.Count == 0);
             if (GUILayout.Button("Combine")) Combine();
             EditorGUI.EndDisabledGroup();
-            if (GUILayout.Button("Clear"))
-            {
+            if (GUILayout.Button("Clear")) {
                 sources.Clear();
                 bakeBlendShapeMap.Clear();
                 boneReamp.Clear();
@@ -127,22 +119,18 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
             HandleDrop();
         }
 
-        void HandleDrop()
-        {
+        void HandleDrop() {
             var ev = Event.current;
-            switch (ev.type)
-            {
+            switch (ev.type) {
                 case EventType.DragUpdated:
-                    if (DragAndDrop.objectReferences.SelectMany(GetRenderers).Any(IsAcceptableObject))
-                    {
+                    if (DragAndDrop.objectReferences.SelectMany(GetRenderers).Any(IsAcceptableObject)) {
                         DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
                         ev.Use();
                     }
                     break;
                 case EventType.DragPerform:
                     var objectRefs = DragAndDrop.objectReferences.SelectMany(GetRenderers).ToArray();
-                    if (objectRefs.Any(IsAcceptableObject))
-                    {
+                    if (objectRefs.Any(IsAcceptableObject)) {
                         DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
                         DragAndDrop.AcceptDrag();
                         sources.AddRange(objectRefs.Where(IsAcceptableObject));
@@ -154,8 +142,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
             }
         }
 
-        static IEnumerable<Renderer> GetRenderers(UnityObject obj)
-        {
+        static IEnumerable<Renderer> GetRenderers(UnityObject obj) {
             if (obj is GameObject go)
                 return go.GetComponentsInChildren<Renderer>(true);
             else if (obj is Renderer r)
@@ -172,8 +159,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
 
         bool IsAcceptableObject(MeshRenderer mr) => mr != null && mr.TryGetComponent(out MeshFilter mf) && mf.sharedMesh != null && !sources.Contains(mr);
 
-        T AutoCreateRenderer<T>() where T : Renderer
-        {
+        T AutoCreateRenderer<T>() where T : Renderer {
             var commonParent = FindCommonParent(sources.Select(x => x.transform));
             var type = typeof(T);
             var newChild = type.Name == "MeshRenderer" ?
@@ -214,35 +200,29 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
             }
         }
 
-        void Combine()
-        {
+        void Combine() {
             RefreshCombineMeshOptions();
             boneReamp.Clear();
-            foreach (var bone in bonesToMergeUpwards)
-            {
+            foreach (var bone in bonesToMergeUpwards) {
                 var targetBone = bone;
-                while (targetBone != null && bonesToMergeUpwards.Contains(targetBone))
-                {
+                while (targetBone != null && bonesToMergeUpwards.Contains(targetBone)) {
                     targetBone = targetBone.parent;
                     boneReamp[bone] = targetBone;
                 }
             }
             unusedTransforms.Clear();
             safeDeleteTransforms.Clear();
-            foreach (var source in sources)
-            {
+            foreach (var source in sources) {
                 unusedTransforms.Add(source.transform);
                 if (source is SkinnedMeshRenderer skinnedMeshRenderer)
                     unusedTransforms.UnionWith(skinnedMeshRenderer.bones.Where(b => b != null));
             }
             bool shouldPingDestination = false;
-            if (destination == null)
-            {
+            if (destination == null) {
                 destination = AutoCreateRenderer<SkinnedMeshRenderer>();
                 shouldPingDestination = true;
             }
-            var saveAssetDefaultPath = sources.Select(source =>
-            {
+            var saveAssetDefaultPath = sources.Select(source => {
                 var skinnedMeshRenderer = source as SkinnedMeshRenderer;
                 if (skinnedMeshRenderer != null) return skinnedMeshRenderer.sharedMesh;
                 var meshRenderer = source as MeshRenderer;
@@ -254,14 +234,12 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
             .Where(p => !string.IsNullOrEmpty(p) && p.StartsWith("Assets/"))
             .Select(System.IO.Path.GetDirectoryName)
             .FirstOrDefault() ?? string.Empty;
-            var mesh = SkinnedMeshCombinerCore.Combine(sources.Select(source =>
-            {
+            var mesh = SkinnedMeshCombinerCore.Combine(sources.Select(source => {
                 if (bakeBlendShapeMap.TryGetValue(source, out var bakeBlendShapeToggles))
                     return (source, bakeBlendShapeToggles.blendShapeFlags, bakeBlendShapeToggles.combineMeshFlags);
                 return (source, null, CombineMeshFlags.None);
             }).ToArray(), destination, mergeFlags, blendShapeCopyMode, boneReamp, blendshapeNameMap);
-            if (mesh != null)
-            {
+            if (mesh != null) {
                 mesh.Optimize();
                 if (destination is SkinnedMeshRenderer skinnedMeshRenderer)
                     unusedTransforms.ExceptWith(skinnedMeshRenderer.bones);
@@ -271,8 +249,7 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner
                 if (autoCleanup) SafeDeleteAllObjects();
                 if (shouldPingDestination) EditorGUIUtility.PingObject(destination);
                 currentTab = Tabs.Cleanup;
-            }
-            else
+            } else
                 Debug.LogError("Failed to combine meshes.");
         }
     }
