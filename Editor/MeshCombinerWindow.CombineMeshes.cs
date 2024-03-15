@@ -98,6 +98,14 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             sourceListScrollPos = EditorGUILayout.BeginScrollView(sourceListScrollPos);
             sourceList.DoLayoutList();
             EditorGUILayout.EndScrollView();
+
+            #region Add Sorting Button
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Sort by Mesh Sorting Order Ascending ↑", EditorStyles.miniButton, GUILayout.ExpandWidth(false))) AutoOrderRenderer(false);
+            if (GUILayout.Button("Sort by Mesh Sorting Order Descending ↓", EditorStyles.miniButton, GUILayout.ExpandWidth(false))) AutoOrderRenderer();
+            EditorGUILayout.EndHorizontal();
+            #endregion
+            
             EditorGUILayout.BeginHorizontal();
             EditorGUI.BeginChangeCheck();
             var newDestination = EditorGUILayout.ObjectField("Destination", destination, typeof(Renderer), true) as Renderer;

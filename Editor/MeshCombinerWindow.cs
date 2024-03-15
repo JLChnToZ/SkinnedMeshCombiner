@@ -171,6 +171,35 @@ namespace JLChnToZ.EditorExtensions.SkinnedMeshCombiner {
             return newChild.GetComponent<T>();
         }
 
+        /// <summary>
+        /// Auto Order Renderer
+        /// </summary>
+        /// <param name="order">Default Descending</param>
+        void AutoOrderRenderer(bool descending = true)
+        {
+            // Convert sourceList to List<Renderer> for sorting
+            List<Renderer> renderers = new List<Renderer>();
+            foreach (var item in sourceList.list)
+            {
+                renderers.Add(item as Renderer);
+            }
+            if (descending)
+            {
+                // Ascending
+                renderers.Sort((a, b) => b.sortingOrder.CompareTo(a.sortingOrder));
+            }
+            else
+            {
+                // Descending
+                renderers.Sort((a, b) => a.sortingOrder.CompareTo(b.sortingOrder));
+            }
+            sourceList.list.Clear();
+            foreach (var item in renderers)
+            {
+                sourceList.list.Add(item);
+            }
+        }
+
         void Combine() {
             RefreshCombineMeshOptions();
             boneReamp.Clear();
