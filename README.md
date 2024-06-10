@@ -1,6 +1,12 @@
 Skinned Mesh Combiner
 =====================
 
+> [!WARN]
+> Deprecation Notice
+> We are migrating this component into AvaUtils, a package bundle contains miscellaneous tools for manipulating an avatar within Unity.
+> While download links are still valid in this repository, they will no longer updated for any bugs or new features.
+> https://github.com/JLChnToZ/avautils
+
 ![Image](cover.png)
 
 This is an all-in-one utility that use to combine skinned mesh while preserving blendshapes and bones.
