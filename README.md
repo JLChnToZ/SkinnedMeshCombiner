@@ -1,7 +1,7 @@
 Skinned Mesh Combiner
 =====================
 
-> [!WARN]
+> [!WARNING]
 > Deprecation Notice
 > We are migrating this component into AvaUtils, a package bundle contains miscellaneous tools for manipulating an avatar within Unity.
 > While download links are still valid in this repository, they will no longer updated for any bugs or new features.
